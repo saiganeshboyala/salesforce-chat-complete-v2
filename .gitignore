@@ -1,0 +1,44 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Data directory (user files, sessions, credentials)
+backend/data/
+
+# Qdrant vector store
+backend/qdrant_data/
+backend/app/qdrant_data/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Schema cache (regenerated at startup)
+backend/schema_cache.json
