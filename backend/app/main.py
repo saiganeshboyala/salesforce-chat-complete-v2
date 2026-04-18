@@ -1139,28 +1139,46 @@ async def analytics_generate(req: AnalyticsRequest, request: Request, current_us
 
     schema_text = schema_to_prompt(get_schema())
 
-    system_prompt = f"""You are a Salesforce data analyst. Given the user's analytics request,
-generate a JSON array of analytics cards. Each card represents one insight or metric.
+    system_prompt = f"""You are a Salesforce data analyst for a staffing/consulting company.
+Given the user's analytics request, generate a JSON array of analytics cards.
 
-Salesforce schema:
+KEY OBJECTS & FIELDS:
+- Student__c: Name, Student_Marketing_Status__c (picklist: 'In Market','Pre Marketing','Verbal Confirmation','Exit','In Job'), Technology__c, Manager__c (ref→Manager__c), Days_in_Market_Business__c, Last_Submission_Date__c, Verbal_Confirmation_Date__c, Phone__c, Email__c, Marketing_Visa_Status__c
+- Submissions__c: Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c, Recruiter_Name__c
+- Interviews__c: Student__c (ref→Student__c), Onsite_Manager__c, Type__c, Final_Status__c (picklist: 'Good','Very Good','Average','Very Bad','Cancelled','Re-Scheduled','Confirmation','Expecting Confirmation','N/A'), Amount__c, Bill_Rate__c, Interview_Date__c
+- Manager__c: Name, Active__c, Total_Expenses_MIS__c, Each_Placement_Cost__c, Students_Count__c, In_Market_Students_Count__c, Verbal_Count__c
+- Job__c: Student__c, Share_With__c (ref→Manager__c), PayRate__c, Bill_Rate__c, Active__c
+
+CROSS-OBJECT: Student__c.Manager__r.Name, Interviews__c.Student__r.Name, Job__c.Share_With__r.Name
+
+COMMON QUERIES:
+- Students in market: SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'In Market'
+- Verbal confirmations: SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation'
+- Status distribution: SELECT Student_Marketing_Status__c, COUNT(Id) cnt FROM Student__c GROUP BY Student_Marketing_Status__c
+- Submissions by BU: SELECT BU_Name__c, COUNT(Id) cnt FROM Submissions__c WHERE Submission_Date__c = THIS_MONTH GROUP BY BU_Name__c
+- Interview status: SELECT Final_Status__c, COUNT(Id) cnt FROM Interviews__c GROUP BY Final_Status__c
+
+Full schema:
 {schema_text[:6000]}
 
-Return ONLY valid JSON — an array of card objects. Each card:
+Return ONLY valid JSON array. Each card:
 {{
   "title": "Short title",
   "soql": "SELECT ... FROM ...",
   "chartType": "bar" | "pie" | "line" | "metric" | "table",
-  "description": "One-line insight description",
-  "xKey": "field for x-axis (for bar/line)",
-  "yKey": "field for y-axis value (for bar/line)",
-  "labelKey": "field for pie labels",
-  "valueKey": "field for pie values"
+  "description": "One-line description",
+  "xKey": "field for x-axis (for bar/line, use the GROUP BY field)",
+  "yKey": "field for y-axis value (for bar/line, use the alias like 'cnt')",
+  "labelKey": "field for pie labels (the GROUP BY field)",
+  "valueKey": "field for pie values (the alias like 'cnt')"
 }}
 
-For "metric" type cards (single number), use: SELECT COUNT() or aggregate SOQL.
-Generate 3-6 cards that together tell a complete story about the user's request.
-Only use SELECT queries. Use valid SOQL syntax.
-Return ONLY the JSON array, no markdown, no explanation."""
+RULES:
+- For "metric" cards: use SELECT COUNT() FROM ... — the totalSize in the result IS the count.
+- For chart cards: use GROUP BY with COUNT(Id) aliased as cnt. Set xKey/labelKey to the grouped field and yKey/valueKey to 'cnt'.
+- Use EXACT picklist values shown above (e.g. 'In Market' not 'in_market').
+- Generate 3-6 cards. Only SELECT queries. No markdown.
+Return ONLY the JSON array."""
 
     try:
         raw = await _call_ai(system_prompt, req.prompt, max_tokens=3000, provider=req.provider)

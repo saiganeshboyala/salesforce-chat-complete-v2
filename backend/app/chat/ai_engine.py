@@ -5,7 +5,7 @@ Every question + answer is saved. The AI uses past successful
 queries as examples to write better SOQL over time.
 Users can thumbs-up/down answers to train it.
 """
-import json, logging, re
+import json, logging, re, time
 from app.config import settings
 from app.salesforce.schema import schema_to_prompt, get_schema
 from app.salesforce.soql_executor import execute_soql
@@ -14,12 +14,38 @@ from app.chat.memory import save_interaction, get_learning_examples_prompt
 
 logger = logging.getLogger(__name__)
 
+# ── SOQL Result Cache (avoid re-querying Salesforce for same question within 5 min)
+_soql_cache = {}
+_CACHE_TTL = 300  # 5 minutes
+
+def _cache_key(question):
+    return question.strip().lower()
+
+def _cache_get(question):
+    key = _cache_key(question)
+    entry = _soql_cache.get(key)
+    if entry and (time.time() - entry["ts"]) < _CACHE_TTL:
+        logger.info(f"Cache hit: {key[:60]}")
+        return entry["soql"], entry["result"], entry["recs"]
+    if entry:
+        del _soql_cache[key]
+    return None
+
+def _cache_set(question, soql, result, recs):
+    if not recs:
+        return
+    key = _cache_key(question)
+    _soql_cache[key] = {"soql": soql, "result": result, "recs": recs, "ts": time.time()}
+    if len(_soql_cache) > 100:
+        oldest = min(_soql_cache, key=lambda k: _soql_cache[k]["ts"])
+        del _soql_cache[oldest]
+
 
 # ── Report Pattern Matcher (skip AI for known reports) ──────────
 # ORDER MATTERS: more specific patterns (multi-keyword) must come before generic ones.
 REPORT_PATTERNS = [
     {
-        "keywords": ["monthly sub", "monthly int", "monthly submission", "monthly interview", "monthly confirmation", "month sub & int", "monthly sub & int"],
+        "keywords": ["monthly sub", "monthly int", "monthly submission", "monthly interview", "monthly confirmation", "monthly conformation", "month sub & int", "monthly sub & int"],
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH"},
         "default_time": "THIS_MONTH",
         "queries": [
@@ -45,7 +71,7 @@ REPORT_PATTERNS = [
         "labels": ["Last Week Submissions", "Last Week Interviews"],
     },
     {
-        "keywords": ["confirmation", "congratulation", "verbal confirmation", "confirmed"],
+        "keywords": ["confirmation", "conformation", "congratulation", "verbal confirmation", "verbal conformation", "confirmed"],
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH", "yesterday": "YESTERDAY", "today": "TODAY"},
         "default_time": "LAST_WEEK",
         "queries": [
@@ -130,7 +156,7 @@ REPORT_PATTERNS = [
         "labels": ["Active Job Payroll", "Bench (In-Market Students)"],
     },
     {
-        "keywords": ["monthly sub", "monthly int", "monthly submission", "monthly interview", "monthly confirmation", "month sub & int", "monthly sub & int"],
+        "keywords": ["monthly sub", "monthly int", "monthly submission", "monthly interview", "monthly confirmation", "monthly conformation", "month sub & int", "monthly sub & int"],
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH"},
         "default_time": "THIS_MONTH",
         "queries": [
@@ -181,6 +207,8 @@ REPORT_PATTERNS = [
 def _match_report_pattern(question):
     """Match question to a known report pattern. Returns list of (query, label) or None."""
     q_lower = question.lower()
+    # Normalize common typos
+    q_lower = q_lower.replace("conformation", "confirmation").replace("submision", "submission")
 
     for pattern in REPORT_PATTERNS:
         if not any(kw in q_lower for kw in pattern["keywords"]):
@@ -309,12 +337,15 @@ ANSWER_PROMPT = """You are an elite data analyst for a staffing/consulting compa
 IRON RULES:
 - Use ONLY the data in QUERY RESULTS. NEVER fabricate, guess, or assume any data point.
 - NEVER show fake names like "John Doe". Every name, number, date must come from the results.
+- PRE-COMPUTED SUMMARY IS YOUR SOURCE OF TRUTH: At the end of the data you will find a "PRE-COMPUTED DATA SUMMARY" with BREAKDOWN tables. These tables contain the EXACT counts you must use. Copy the numbers directly — do NOT re-count the JSON records yourself. If the summary says JAVA | 20, your table MUST show JAVA | 20. The TOTAL RECORDS number goes in your headline.
 - If 0 records or error: say so clearly, suggest a rephrased question.
 - If data partially answers: give what you have, note the gap.
 
 RESPONSE STRUCTURE (follow this exact pattern):
 
 1. **HEADLINE** — One bold sentence directly answering the question with the key number.
+   The total count MUST equal "TOTAL RECORDS" from DATA SUMMARY. NOT the number of unique groups.
+   Example: if 64 records across 7 technologies → "**64 confirmations** across **7 technologies**" (NOT "7 confirmations").
    "**45 students** are currently under BU Divya Panguluri."
    "**12 submissions** were made yesterday across **4 BUs**."
 
@@ -559,20 +590,82 @@ async def _call_ai_stream(system, message, max_tokens=2000):
 
 # ── Data Summary (pre-compute for AI accuracy) ──────────────────
 
-def _build_data_summary(records):
+async def _build_data_summary(records, true_total=None, soql_query=None):
     """Pre-compute counts and groupings from records so the AI doesn't have to count manually."""
     if not records or len(records) < 3:
         return ""
 
-    summary_lines = [f"\nDATA SUMMARY (pre-computed, use these exact numbers):"]
-    summary_lines.append(f"  Total records: {len(records)}")
+    total = true_total or len(records)
+    is_limited = true_total and true_total > len(records)
+
+    summary_lines = []
+    summary_lines.append(f"\n{'='*60}")
+    summary_lines.append(f"PRE-COMPUTED DATA SUMMARY — COPY THESE NUMBERS INTO YOUR RESPONSE")
+    summary_lines.append(f"{'='*60}")
+    summary_lines.append(f"TOTAL RECORDS = {total}")
+    if is_limited:
+        summary_lines.append(f"NOTE: {true_total} total records. Use {true_total} in your headline.")
+
+    # If result was limited, run GROUP BY queries for accurate breakdowns
+    group_by_results = {}
+    if is_limited and soql_query:
+        from_m = re.search(r'FROM\s+(\w+)', soql_query, re.IGNORECASE)
+        where_m = re.search(r'(WHERE\s+.+?)(?:\s+ORDER|\s+GROUP|\s+LIMIT|\s*$)', soql_query, re.IGNORECASE | re.DOTALL)
+        if from_m:
+            obj_name = from_m.group(1)
+            where_clause = where_m.group(1) if where_m else ""
+            # Determine which groupable fields exist in the records
+            groupable_fields = []
+            sample = records[0] if records else {}
+            for field in ["Technology__c", "BU_Name__c", "Onsite_Manager__c",
+                          "Student_Marketing_Status__c", "Final_Status__c",
+                          "Type__c", "Offshore_Manager_Name__c", "Recruiter_Name__c",
+                          "Project_Type__c", "Marketing_Visa_Status__c"]:
+                if field in sample:
+                    groupable_fields.append(field)
+
+            for field in groupable_fields[:4]:
+                try:
+                    gq = f"SELECT {field}, COUNT(Id) cnt FROM {obj_name} {where_clause} GROUP BY {field} ORDER BY COUNT(Id) DESC LIMIT 30"
+                    gr = await execute_soql(gq)
+                    if "error" not in gr and gr.get("records"):
+                        counts = {}
+                        for rec in gr["records"]:
+                            val = rec.get(field)
+                            cnt = rec.get("cnt", 0)
+                            if val and val != "None":
+                                counts[val] = cnt
+                        if counts and len(counts) > 1:
+                            group_by_results[field] = counts
+                except Exception as e:
+                    logger.warning(f"GROUP BY {field} failed: {e}")
 
     group_fields = ["BU_Name__c", "Onsite_Manager__c", "Offshore_Manager_Name__c",
                      "Manager__r", "Recruiter_Name__c", "Technology__c",
                      "Student_Marketing_Status__c", "Type__c", "Final_Status__c",
                      "Project_Type__c", "_query_label"]
 
+    tables_built = []
+
     for field in group_fields:
+        # Use GROUP BY results if available (accurate for full dataset)
+        if field in group_by_results:
+            counts = group_by_results[field]
+            label = field.replace("__c", "").replace("__r", "").replace("_", " ")
+            sorted_counts = sorted(counts.items(), key=lambda x: -x[1])
+            group_total = sum(c for _, c in sorted_counts)
+            summary_lines.append(f"\nBREAKDOWN BY {label.upper()} (copy these exact numbers):")
+            summary_lines.append(f"| {label} | Count |")
+            summary_lines.append(f"|---|---|")
+            for name, count in sorted_counts[:20]:
+                summary_lines.append(f"| {name} | {count} |")
+            summary_lines.append(f"| **Total** | **{group_total}** |")
+            if len(sorted_counts) > 20:
+                summary_lines.append(f"(+ {len(sorted_counts) - 20} more groups)")
+            tables_built.append(label)
+            continue
+
+        # Fallback: count from fetched records
         counts = {}
         for r in records:
             val = None
@@ -588,11 +681,16 @@ def _build_data_summary(records):
         if counts and 1 < len(counts) <= 50:
             label = field.replace("__c", "").replace("__r", "").replace("_", " ")
             sorted_counts = sorted(counts.items(), key=lambda x: -x[1])
-            summary_lines.append(f"\n  By {label}:")
+            group_total = sum(c for _, c in sorted_counts)
+            summary_lines.append(f"\nBREAKDOWN BY {label.upper()} (copy these exact numbers):")
+            summary_lines.append(f"| {label} | Count |")
+            summary_lines.append(f"|---|---|")
             for name, count in sorted_counts[:20]:
-                summary_lines.append(f"    {name}: {count}")
+                summary_lines.append(f"| {name} | {count} |")
+            summary_lines.append(f"| **Total** | **{group_total}** |")
             if len(sorted_counts) > 20:
-                summary_lines.append(f"    ... and {len(sorted_counts) - 20} more groups")
+                summary_lines.append(f"(+ {len(sorted_counts) - 20} more groups)")
+            tables_built.append(label)
 
     # Sum numeric fields
     num_fields = ["Amount__c", "Amount_INR__c", "Bill_Rate__c", "Pay_Roll_Tax__c",
@@ -610,7 +708,9 @@ def _build_data_summary(records):
             except (ValueError, TypeError):
                 pass
 
-    return "\n".join(summary_lines) if len(summary_lines) > 2 else ""
+    summary_lines.append(f"{'='*60}")
+
+    return "\n".join(summary_lines) if tables_built else ""
 
 
 # ── Helper Functions ─────────────────────────────────────────────
@@ -675,7 +775,7 @@ def _get_focused_schema(obj_names):
     return "\n".join(lines)
 
 
-def _extract_object_fields_hint(soql, schema_text):
+def _extract_object_fields_hint(soql, _schema_text=None):
     """Extract the object name from a SOQL query and list its exact fields."""
     m = re.search(r'FROM\s+(\w+)', soql, re.IGNORECASE)
     if not m:
@@ -820,6 +920,12 @@ async def _execute_multi_query(query_pairs):
 # ── SOQL Path ────────────────────────────────────────────────────
 
 async def _soql_path(question, schema_text, history=None, last_soql=None):
+    # Check cache first (skip for follow-ups that modify previous SOQL)
+    if not last_soql:
+        cached = _cache_get(question)
+        if cached:
+            return cached
+
     # Step 0: Try direct pattern match (instant, no AI call needed)
     if not last_soql:
         pattern_queries = _match_report_pattern(question)
@@ -941,6 +1047,9 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
             except Exception:
                 pass
 
+    if recs and not last_soql:
+        _cache_set(question, q, result, recs)
+
     return q, result, recs
 
 
@@ -1049,12 +1158,26 @@ async def answer_question(question, conversation_history=None, username=None, la
             parts.append(f"  [{r.get('sf_object', '')}] (sim: {r.get('score', 0):.2f}) {r['text'][:400]}")
 
     if not parts:
-        save_interaction(question, None, "", route, username=username)
-        return {"answer": "I couldn't retrieve data for that question. Try rephrasing — for example, specify the exact object or field you're looking for.", "soql": soql_query, "data": None}
+        error_detail = ""
+        if soql_result and "error" in soql_result:
+            error_detail = f"\n\n**Query error:** {soql_result['error'][:200]}"
+        elif soql_query:
+            error_detail = "\n\nThe query ran but returned 0 records."
+        no_data_msg = (
+            "I couldn't find data for that question."
+            f"{error_detail}"
+            "\n\n**Try:**"
+            "\n- Check the spelling of names or statuses"
+            "\n- Use broader terms (e.g. 'students' instead of a specific name)"
+            "\n- Ask about a specific object: Students, Submissions, Interviews, Jobs, Employees"
+        )
+        save_interaction(question, soql_query, no_data_msg, route, username=username)
+        return {"answer": no_data_msg, "soql": soql_query, "data": None, "suggestions": ["How many students are in market?", "Show today's submissions by BU", "List all BU managers"]}
 
     # Pre-compute data summary for accurate counts
     if soql_recs:
-        data_summary = _build_data_summary(soql_recs)
+        tt = soql_result.get("totalSize", len(soql_recs)) if soql_result else None
+        data_summary = await _build_data_summary(soql_recs, true_total=tt, soql_query=soql_query)
         if data_summary:
             parts.append(data_summary)
 
@@ -1096,23 +1219,46 @@ async def answer_question_stream(question, conversation_history=None, username=N
         yield {"type": "done", "data": {"answer": msg, "soql": None, "data": None}}
         return
 
+    yield {"type": "thinking", "data": "Analyzing question"}
+
     route = await _route(question)
     logger.info(f"Route (stream): {route} | Q: {question[:60]}")
     yield {"type": "route", "data": route}
+    yield {"type": "thinking", "data": f"Route → {route}"}
 
     soql_query, soql_result, soql_recs = None, None, None
     rag_results = None
 
     if route in ("SOQL", "BOTH"):
-        soql_query, soql_result, soql_recs = await _soql_path(question, schema_text, conversation_history, last_soql=last_soql)
+        # Check cache
+        if not last_soql:
+            cached = _cache_get(question)
+            if cached:
+                yield {"type": "thinking", "data": "Found cached result (< 5 min old)"}
+                soql_query, soql_result, soql_recs = cached
+                yield {"type": "soql", "data": soql_query}
+            else:
+                pattern_queries = _match_report_pattern(question)
+                if pattern_queries:
+                    yield {"type": "thinking", "data": f"Matched report pattern ({len(pattern_queries)} queries)"}
+
+        if soql_recs is None:
+            yield {"type": "thinking", "data": "Picking Salesforce objects"}
+            soql_query, soql_result, soql_recs = await _soql_path(question, schema_text, conversation_history, last_soql=last_soql)
+
         if soql_query:
             yield {"type": "soql", "data": soql_query}
 
-        # Fallback: if SOQL path failed and question looks like a person name search,
-        # try a direct name search across Student__c
+        if soql_recs is not None and len(soql_recs) > 0:
+            yield {"type": "thinking", "data": f"Fetched {len(soql_recs)} records from Salesforce"}
+        elif soql_result and "error" in soql_result:
+            yield {"type": "thinking", "data": "Query error — trying fallback"}
+
+        # Fallback: if SOQL path failed and question looks like a person name search
         if soql_recs is None or (soql_recs is not None and len(soql_recs) == 0):
             name_words = [w for w in question.split() if len(w) > 2 and w[0].isupper()]
             if len(name_words) >= 2:
+                yield {"type": "thinking", "data": "Searching by name"}
                 last_word = name_words[-1]
                 fallback_q = f"SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c FROM Student__c WHERE Name LIKE '%{last_word}%' LIMIT 50"
                 try:
@@ -1125,6 +1271,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
                         soql_result = fb_result
                         soql_recs = recs
                         yield {"type": "soql", "data": fallback_q}
+                        yield {"type": "thinking", "data": f"Name search found {len(recs)} records"}
                         logger.info(f"Name fallback found {len(recs)} records for '{last_word}'")
                 except Exception as e:
                     logger.warning(f"Name fallback failed: {e}")
@@ -1191,23 +1338,44 @@ async def answer_question_stream(question, conversation_history=None, username=N
             parts.append(f"  [{r.get('sf_object', '')}] (sim: {r.get('score', 0):.2f}) {r['text'][:400]}")
 
     if not parts:
-        no_data_msg = "I couldn't retrieve data for that question. Try rephrasing — for example, specify the exact object or field you're looking for."
+        error_detail = ""
+        if soql_result and "error" in soql_result:
+            error_detail = f"\n\n**Query error:** {soql_result['error'][:200]}"
+        elif soql_query:
+            error_detail = "\n\nThe query ran but returned 0 records."
+
+        no_data_msg = (
+            "I couldn't find data for that question."
+            f"{error_detail}"
+            "\n\n**Try:**"
+            "\n- Check the spelling of names or statuses"
+            "\n- Use broader terms (e.g. 'students' instead of a specific name)"
+            "\n- Ask about a specific object: Students, Submissions, Interviews, Jobs, Employees"
+        )
+        yield {"type": "thinking_done", "data": None}
         yield {"type": "token", "data": no_data_msg}
         try:
             save_interaction(question, soql_query, no_data_msg, route, username=username)
         except Exception:
             pass
-        suggestions = await _generate_suggestions(question, no_data_msg)
-        if suggestions:
-            yield {"type": "suggestions", "data": suggestions}
-        yield {"type": "done", "data": {"answer": no_data_msg, "soql": soql_query, "route": route, "data": None, "suggestions": suggestions}}
+        error_suggestions = [
+            "How many students are in market?",
+            "Show today's submissions by BU",
+            "List all BU managers",
+        ]
+        yield {"type": "suggestions", "data": error_suggestions}
+        yield {"type": "done", "data": {"answer": no_data_msg, "soql": soql_query, "route": route, "data": None, "suggestions": error_suggestions}}
         return
 
     # Pre-compute data summary for accurate counts
     if soql_recs:
-        data_summary = _build_data_summary(soql_recs)
+        tt = soql_result.get("totalSize", len(soql_recs)) if soql_result else None
+        data_summary = await _build_data_summary(soql_recs, true_total=tt, soql_query=soql_query)
         if data_summary:
             parts.append(data_summary)
+
+    yield {"type": "thinking", "data": "Generating formatted answer"}
+    yield {"type": "thinking_done", "data": None}
 
     system = RAG_PROMPT if route in ("RAG", "BOTH") else ANSWER_PROMPT
     prompt = f"Question: {question}\n\nData:\n" + "\n".join(parts)

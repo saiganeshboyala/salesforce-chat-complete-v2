@@ -144,11 +144,16 @@ function NotePopover({ row, existingNotes, onClose, onSaved }) {
   )
 }
 
+const PAGE_SIZE = 25
+
 export default function DataTable({ records, totalSize }) {
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
   const [notesMap, setNotesMap] = useState({})
   const [openRow, setOpenRow] = useState(null)
+  const [page, setPage] = useState(0)
+
+  useEffect(() => { setPage(0) }, [records])
 
   const cols = useMemo(
     () => (records?.length ? Object.keys(records[0]).filter(k => k !== 'attributes') : []),
@@ -180,17 +185,25 @@ export default function DataTable({ records, totalSize }) {
   if (!records?.length || records.length < 3) return null
   if (isAggregate(records)) return null
 
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const pageRows = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const start = page * PAGE_SIZE + 1
+  const end = Math.min((page + 1) * PAGE_SIZE, sorted.length)
+
   const toggle = (col) => {
     if (sortKey === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
     else { setSortKey(col); setSortDir('asc') }
+    setPage(0)
   }
 
   return (
     <div className="data-table-container">
       <div className="data-table-header">
         <span className="data-table-count">
-          Showing {records.length.toLocaleString()}
-          {totalSize && totalSize > records.length ? ` of ${totalSize.toLocaleString()}` : ''}
+          {sorted.length > PAGE_SIZE
+            ? `${start}–${end} of ${sorted.length.toLocaleString()}`
+            : `${sorted.length.toLocaleString()}`}
+          {totalSize && totalSize > sorted.length ? ` (${totalSize.toLocaleString()} total in Salesforce)` : ''}
           {' '}records
         </span>
       </div>
@@ -211,7 +224,7 @@ export default function DataTable({ records, totalSize }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r, i) => {
+            {pageRows.map((r, i) => {
               const rid = pickRecordId(r)
               const rowNotes = rid ? (notesMap[rid] || []) : []
               return (
@@ -240,6 +253,35 @@ export default function DataTable({ records, totalSize }) {
           </tbody>
         </table>
       </div>
+      {totalPages > 1 && (
+        <div className="data-table-pagination">
+          <button
+            className="pagination-btn"
+            disabled={page === 0}
+            onClick={() => setPage(0)}
+            title="First page"
+          >««</button>
+          <button
+            className="pagination-btn"
+            disabled={page === 0}
+            onClick={() => setPage(p => p - 1)}
+          >‹ Prev</button>
+          <span className="pagination-info">
+            Page {page + 1} of {totalPages}
+          </span>
+          <button
+            className="pagination-btn"
+            disabled={page >= totalPages - 1}
+            onClick={() => setPage(p => p + 1)}
+          >Next ›</button>
+          <button
+            className="pagination-btn"
+            disabled={page >= totalPages - 1}
+            onClick={() => setPage(totalPages - 1)}
+            title="Last page"
+          >»»</button>
+        </div>
+      )}
       {openRow && (
         <NotePopover
           row={openRow}

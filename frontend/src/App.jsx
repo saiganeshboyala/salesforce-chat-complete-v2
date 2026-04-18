@@ -11,7 +11,6 @@ import SchemaMap from './components/SchemaMap'
 import SchedulesPage from './components/SchedulesPage'
 import FilesPage from './components/FilesPage'
 import ConnectorsPage from './components/ConnectorsPage'
-import AnalyticsPage from './components/AnalyticsPage'
 import AuditPage from './components/AuditPage'
 import ComparisonPage from './components/ComparisonPage'
 import AlertsPage from './components/AlertsPage'
@@ -46,7 +45,6 @@ const I = {
   bell: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>,
   note: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
   report: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-5"/></svg>,
-  analytics: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="7.5 4.21 12 6.81 16.5 4.21"/><polyline points="7.5 19.79 7.5 14.6 3 12"/><polyline points="21 12 16.5 14.6 16.5 19.79"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
 }
 
 const timeStr = (d) => d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
@@ -410,11 +408,13 @@ export default function App() {
 
   if (!user) return <LoginPage onLogin={handleLogin} />
 
-  const suggestions = [
-    'How many students are in market?',
-    'Show student status breakdown',
-    'List verbal confirmations',
-    'Total expenses by BU',
+  const quickActions = [
+    { label: "Today's Submissions", icon: '📋', q: "Today's submissions by BU" },
+    { label: 'Weekly Confirmations', icon: '🎉', q: 'Last week confirmations with congratulations' },
+    { label: 'Students In Market', icon: '📊', q: 'How many students are in market?' },
+    { label: 'Monthly Report', icon: '📈', q: 'This month submissions, interviews and confirmations' },
+    { label: 'No Interviews (14d)', icon: '⚠️', q: '2 weeks no interviews by BU' },
+    { label: 'BU Expenses', icon: '💰', q: 'Expenses and placement cost by BU' },
   ]
 
   return (
@@ -453,9 +453,6 @@ export default function App() {
             </div>
             <div className={`nav-item ${view === 'connectors' ? 'active' : ''}`} onClick={() => handleNavClick('connectors')}>
               {I.plug} <span>{t('sidebar.connectors')}</span>
-            </div>
-            <div className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => handleNavClick('analytics')}>
-              {I.analytics} <span>AI Analytics</span>
             </div>
             {user.role === 'admin' && (
               <>
@@ -527,8 +524,6 @@ export default function App() {
           <FilesPage onUseInChat={handleUseFileInChat} />
         ) : view === 'connectors' ? (
           <ConnectorsPage />
-        ) : view === 'analytics' ? (
-          <AnalyticsPage />
         ) : view === 'audit' ? (
           <AuditPage />
         ) : view === 'compare' ? (
@@ -550,24 +545,19 @@ export default function App() {
 
             <div className="messages">
               {messages.length === 0 && (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
-                  <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--accent-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{I.sf}</div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24 }}>
+                  <div style={{ width: 56, height: 56, borderRadius: 16, background: 'var(--accent-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{I.sf}</div>
                   <div style={{ textAlign: 'center' }}>
-                    <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 6 }}>{t('chat.welcome', { name: user.name || user.username })}</h2>
-                    <p style={{ color: 'var(--text-muted)', fontSize: 13, maxWidth: 400 }}>
+                    <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 6 }}>{t('chat.welcome', { name: user.name || user.username })}</h2>
+                    <p style={{ color: 'var(--text-muted)', fontSize: 13, maxWidth: 420 }}>
                       {t('chat.welcomeSub')}
                     </p>
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 500 }}>
-                    {suggestions.map(s => (
-                      <button key={s} onClick={() => send(s)} style={{
-                        padding: '8px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)', fontSize: 12,
-                        cursor: 'pointer', fontFamily: 'var(--font-sans)', transition: 'all 150ms',
-                      }}
-                      onMouseEnter={e => { e.target.style.borderColor = 'var(--accent)'; e.target.style.color = 'var(--text-primary)' }}
-                      onMouseLeave={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--text-secondary)' }}>
-                        {s}
+                  <div className="quick-actions-grid">
+                    {quickActions.map(a => (
+                      <button key={a.q} className="quick-action-card" onClick={() => send(a.q)}>
+                        <span className="quick-action-icon">{a.icon}</span>
+                        <span className="quick-action-label">{a.label}</span>
                       </button>
                     ))}
                   </div>
@@ -588,7 +578,10 @@ export default function App() {
                     <div className="message-body">
                       <div className="message-content">
                         {isStreamingEmpty ? (
-                          <div className="typing-indicator"><div className="typing-dot"/><div className="typing-dot"/><div className="typing-dot"/></div>
+                          <div className="thinking-indicator">
+                            <span className="thinking-asterisk">*</span>
+                            <span className="thinking-text">Thinking...</span>
+                          </div>
                         ) : (
                           <>
                             <span

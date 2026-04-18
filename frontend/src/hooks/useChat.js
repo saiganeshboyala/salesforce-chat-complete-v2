@@ -106,6 +106,9 @@ export function useChat(onSessionChanged) {
           try { evt = JSON.parse(dataLines.join('\n')) } catch { continue }
 
           switch (evt.type) {
+            case 'thinking':
+            case 'thinking_done':
+              break
             case 'route':
               finalRoute = evt.data
               break
