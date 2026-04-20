@@ -49,9 +49,9 @@ REPORT_PATTERNS = [
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH"},
         "default_time": "THIS_MONTH",
         "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = {time} ORDER BY BU_Name__c LIMIT 200",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 200",
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 200",
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = {time} ORDER BY BU_Name__c LIMIT 2000",
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000",
+            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000",
         ],
         "labels": ["Monthly Submissions", "Monthly Interviews", "Monthly Confirmations"],
     },
@@ -61,12 +61,12 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY BU_Name__c LIMIT 200",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = LAST_WEEK ORDER BY Onsite_Manager__c LIMIT 200",
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY BU_Name__c LIMIT 2000",
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = LAST_WEEK ORDER BY Onsite_Manager__c LIMIT 2000",
         ],
         "queries_lead": [
-            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY Offshore_Manager_Name__c LIMIT 200",
-            "SELECT Student__r.Name, Offshore_Manager__c, Type__c, Final_Status__c FROM Interviews__c WHERE CreatedDate = LAST_WEEK ORDER BY Offshore_Manager__c LIMIT 200",
+            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY Offshore_Manager_Name__c LIMIT 2000",
+            "SELECT Student__r.Name, Offshore_Manager__c, Type__c, Final_Status__c FROM Interviews__c WHERE CreatedDate = LAST_WEEK ORDER BY Offshore_Manager__c LIMIT 2000",
         ],
         "labels": ["Last Week Submissions", "Last Week Interviews"],
     },
@@ -75,7 +75,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH", "yesterday": "YESTERDAY", "today": "TODAY"},
         "default_time": "LAST_WEEK",
         "queries": [
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c, Marketing_Visa_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 200"
+            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c, Marketing_Visa_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000"
         ],
         "labels": ["Confirmations"],
     },
@@ -84,7 +84,7 @@ REPORT_PATTERNS = [
         "time_keywords": {},
         "default_time": None,
         "queries": [
-            "SELECT Name, Manager__r.Name, PreMarketingStatus__c, Resume_Preparation__c, Resume_Verified_By_Lead__c, Resume_Verified_By_Manager__c, Resume_Verification__c, Resume_Review__c, Otter_Screening__c, Otter_Final_Screening__c, Otter_Real_Time_Screeing_1__c, Otter_Real_Time_Screeing_2__c, Has_Linkedin_Created__c, Student_LinkedIn_Account_Review__c, MQ_Screening_By_Lead__c, MQ_Screening_By_Manager__c FROM Student__c WHERE Student_Marketing_Status__c = 'Pre Marketing' ORDER BY Manager__r.Name LIMIT 200"
+            "SELECT Name, Manager__r.Name, PreMarketingStatus__c, Resume_Preparation__c, Resume_Verified_By_Lead__c, Resume_Verified_By_Manager__c, Resume_Verification__c, Resume_Review__c, Otter_Screening__c, Otter_Final_Screening__c, Otter_Real_Time_Screeing_1__c, Otter_Real_Time_Screeing_2__c, Has_Linkedin_Created__c, Student_LinkedIn_Account_Review__c, MQ_Screening_By_Lead__c, MQ_Screening_By_Manager__c FROM Student__c WHERE Student_Marketing_Status__c = 'Pre Marketing' ORDER BY Manager__r.Name LIMIT 2000"
         ],
         "labels": ["PreMarketing Students"],
     },
@@ -94,10 +94,10 @@ REPORT_PATTERNS = [
         "default_time": None,
         "by_lead": True,
         "queries_bu": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c FROM Submissions__c WHERE Submission_Date__c = YESTERDAY ORDER BY BU_Name__c LIMIT 200"
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c FROM Submissions__c WHERE Submission_Date__c = YESTERDAY ORDER BY BU_Name__c LIMIT 2000"
         ],
         "queries_lead": [
-            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = YESTERDAY ORDER BY Offshore_Manager_Name__c LIMIT 200"
+            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = YESTERDAY ORDER BY Offshore_Manager_Name__c LIMIT 2000"
         ],
         "labels": ["Yesterday Submissions"],
     },
@@ -107,10 +107,10 @@ REPORT_PATTERNS = [
         "default_time": None,
         "by_lead": True,
         "queries_bu": [
-            "SELECT Name, Manager__r.Name, Technology__c, Last_Submission_Date__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Manager__r.Name LIMIT 200"
+            "SELECT Name, Manager__r.Name, Technology__c, Last_Submission_Date__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Manager__r.Name LIMIT 2000"
         ],
         "queries_lead": [
-            "SELECT Name, Offshore_Manager_Name__c, Manager__r.Name, Technology__c, Last_Submission_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Offshore_Manager_Name__c LIMIT 200"
+            "SELECT Name, Offshore_Manager_Name__c, Manager__r.Name, Technology__c, Last_Submission_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Offshore_Manager_Name__c LIMIT 2000"
         ],
         "labels": ["Students with No Recent Submissions"],
     },
@@ -119,7 +119,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH"},
         "default_time": "THIS_WEEK",
         "queries": [
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Interview_Date__c, Amount__c, Bill_Rate__c, Final_Status__c FROM Interviews__c WHERE (Amount__c = null OR Bill_Rate__c = null OR Final_Status__c = null) AND CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 200"
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Interview_Date__c, Amount__c, Bill_Rate__c, Final_Status__c FROM Interviews__c WHERE (Amount__c = null OR Bill_Rate__c = null OR Final_Status__c = null) AND CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000"
         ],
         "labels": ["Interviews with Missing Fields"],
     },
@@ -129,10 +129,10 @@ REPORT_PATTERNS = [
         "default_time": None,
         "by_lead": True,
         "queries_bu": [
-            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Manager__r.Name LIMIT 200"
+            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Manager__r.Name LIMIT 2000"
         ],
         "queries_lead": [
-            "SELECT Name, Manager__r.Name, Offshore_Manager_Name__c, Technology__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Offshore_Manager_Name__c LIMIT 200"
+            "SELECT Name, Manager__r.Name, Offshore_Manager_Name__c, Technology__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Offshore_Manager_Name__c LIMIT 2000"
         ],
         "labels": ["In-Market Students with No Interviews (14 days)"],
     },
@@ -141,7 +141,7 @@ REPORT_PATTERNS = [
         "time_keywords": {},
         "default_time": None,
         "queries": [
-            "SELECT Name, Total_Expenses_MIS__c, Each_Placement_Cost__c, BU_Student_With_Job_Count__c, Students_Count__c, In_Market_Students_Count__c, Verbal_Count__c, IN_JOB_Students_Count__c FROM Manager__c WHERE Active__c = true ORDER BY Name LIMIT 200"
+            "SELECT Name, Total_Expenses_MIS__c, Each_Placement_Cost__c, BU_Student_With_Job_Count__c, Students_Count__c, In_Market_Students_Count__c, Verbal_Count__c, IN_JOB_Students_Count__c FROM Manager__c WHERE Active__c = true ORDER BY Name LIMIT 2000"
         ],
         "labels": ["BU Expenses & Placement Costs"],
     },
@@ -150,8 +150,8 @@ REPORT_PATTERNS = [
         "time_keywords": {},
         "default_time": None,
         "queries": [
-            "SELECT Student__r.Name, Share_With__r.Name, PayRate__c, Caluculated_Pay_Rate__c, Pay_Roll_Tax__c, Profit__c, Bill_Rate__c, Payroll_Month__c, Project_Type__c, Technology__c FROM Job__c WHERE Active__c = true ORDER BY Share_With__r.Name LIMIT 200",
-            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' ORDER BY Manager__r.Name LIMIT 200",
+            "SELECT Student__r.Name, Share_With__r.Name, PayRate__c, Caluculated_Pay_Rate__c, Pay_Roll_Tax__c, Profit__c, Bill_Rate__c, Payroll_Month__c, Project_Type__c, Technology__c FROM Job__c WHERE Active__c = true ORDER BY Share_With__r.Name LIMIT 2000",
+            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' ORDER BY Manager__r.Name LIMIT 2000",
         ],
         "labels": ["Active Job Payroll", "Bench (In-Market Students)"],
     },
@@ -160,9 +160,9 @@ REPORT_PATTERNS = [
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH"},
         "default_time": "THIS_MONTH",
         "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = {time} ORDER BY BU_Name__c LIMIT 200",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 200",
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 200",
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = {time} ORDER BY BU_Name__c LIMIT 2000",
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000",
+            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000",
         ],
         "labels": ["Monthly Submissions", "Monthly Interviews", "Monthly Confirmations"],
     },
@@ -171,7 +171,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH", "last week": "LAST_WEEK", "this week": "THIS_WEEK"},
         "default_time": "THIS_MONTH",
         "queries": [
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Amount__c, Amount_INR__c, Bill_Rate__c, Final_Status__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 200"
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Amount__c, Amount_INR__c, Bill_Rate__c, Final_Status__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000"
         ],
         "labels": ["Interviews with Amounts"],
     },
@@ -181,8 +181,8 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "name_filter": True,
         "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE BU_Name__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Submission_Date__c LIMIT 200",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE Onsite_Manager__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Interview_Date__c LIMIT 200",
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE BU_Name__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Submission_Date__c LIMIT 2000",
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE Onsite_Manager__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Interview_Date__c LIMIT 2000",
         ],
         "labels": ["Submissions", "Interviews"],
     },
@@ -192,10 +192,10 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY BU_Name__c, Student_Name__c LIMIT 200"
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY BU_Name__c, Student_Name__c LIMIT 2000"
         ],
         "queries_lead": [
-            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Student_Name__c LIMIT 200"
+            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Student_Name__c LIMIT 2000"
         ],
         "labels": ["Student Performance (Submissions)"],
     },
@@ -205,10 +205,10 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Recruiter_Name__c, Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY BU_Name__c, Recruiter_Name__c LIMIT 200"
+            "SELECT Recruiter_Name__c, Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY BU_Name__c, Recruiter_Name__c LIMIT 2000"
         ],
         "queries_lead": [
-            "SELECT Recruiter_Name__c, Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Recruiter_Name__c LIMIT 200"
+            "SELECT Recruiter_Name__c, Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Recruiter_Name__c LIMIT 2000"
         ],
         "labels": ["Recruiter Performance (Submissions)"],
     },
@@ -321,7 +321,7 @@ RULES:
 - Always include Name in SELECT + as many useful fields as possible for "details" queries.
 - For "details of [person]" or "personal details": SELECT ALL important fields (Name, status, technology, manager, dates, phone, email, visa, etc.) — not just 3-5 fields.
 - For follow-ups like "by lead" or "this month": look at PREVIOUS SOQL and modify the GROUP/ORDER/WHERE.
-- Max LIMIT 200. Only SELECT. If impossible, return: NO_SOQL
+- Max LIMIT 2000. Only SELECT. If impossible, return: NO_SOQL
 - SOQL has NO date arithmetic. Date filters: TODAY, THIS_MONTH, LAST_N_DAYS:30, etc.
 - textarea fields CANNOT be in GROUP BY or WHERE =.
 
@@ -345,19 +345,19 @@ WHEN USER ASKS ABOUT A BU (business unit):
 
 EXAMPLES (learn from these):
 Q: "how many students in market under Divya?"
-A: SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c, Student_Marketing_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Manager__r.Name LIKE '%Divya%' ORDER BY Days_in_Market_Business__c DESC LIMIT 200
+A: SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c, Student_Marketing_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Manager__r.Name LIKE '%Divya%' ORDER BY Days_in_Market_Business__c DESC LIMIT 2000
 
 Q: "last week submissions by BU"
-A: SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY BU_Name__c LIMIT 200
+A: SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY BU_Name__c LIMIT 2000
 
 Q: "students with no interviews in 2 weeks"
-A: SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Manager__r.Name LIMIT 200
+A: SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Manager__r.Name LIMIT 2000
 
 Q: "top BUs by submission count this month"
-A: SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = THIS_MONTH ORDER BY BU_Name__c LIMIT 200
+A: SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = THIS_MONTH ORDER BY BU_Name__c LIMIT 2000
 
 Q: "details of Sai Ganesh Chinnamsetty"
-A: SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c, Last_Submission_Date__c, PreMarketingStatus__c, Verbal_Confirmation_Date__c, Project_Start_Date__c FROM Student__c WHERE Name LIKE '%Chinnamsetty%' LIMIT 200"""
+A: SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c, Last_Submission_Date__c, PreMarketingStatus__c, Verbal_Confirmation_Date__c, Project_Start_Date__c FROM Student__c WHERE Name LIKE '%Chinnamsetty%' LIMIT 2000"""
 
 ANSWER_PROMPT = """You are an elite data analyst for a staffing/consulting company. You produce executive-quality reports from Salesforce data.
 

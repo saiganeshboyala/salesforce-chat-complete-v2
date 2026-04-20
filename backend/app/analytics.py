@@ -98,7 +98,7 @@ async def compute_analytics():
     bu_raw = await _safe_query(
         "SELECT BU_Name__c FROM Submissions__c "
         "WHERE Submission_Date__c = THIS_MONTH "
-        "ORDER BY BU_Name__c LIMIT 2000"
+        "ORDER BY BU_Name__c LIMIT 20000"
     )
     bu_counts = {}
     for r in bu_raw:
@@ -334,7 +334,7 @@ async def compute_analytics():
         "SELECT Name, Total_Expenses_MIS__c, Each_Placement_Cost__c, "
         "Students_Count__c, In_Market_Students_Count__c, Verbal_Count__c "
         "FROM Manager__c WHERE Active__c = true "
-        "ORDER BY Students_Count__c DESC NULLS LAST LIMIT 200"
+        "ORDER BY Students_Count__c DESC NULLS LAST LIMIT 2000"
     )
     expense_data = []
     for r in bu_expense:
