@@ -155,7 +155,7 @@ async def _sync_students(session, last_sync=None):
         "Manager__c, Manager__r.Name, Phone__c, "
         "Marketing_Visa_Status__c, Days_in_Market_Business__c, "
         "Last_Submission_Date__c, PreMarketingStatus__c, "
-        "Verbal_Confirmation_Date__c, Project_Start_Date__c, "
+        "Verbal_Confirmation_Date__c, "
         "Resume_Preparation__c, Resume_Verified_By_Lead__c, "
         "Resume_Verified_By_Manager__c, Resume_Verification__c, Resume_Review__c, "
         "Otter_Screening__c, Otter_Final_Screening__c, "
@@ -182,7 +182,6 @@ async def _sync_students(session, last_sync=None):
             "last_submission_date": _parse_sf_date(r.get("Last_Submission_Date__c")),
             "pre_marketing_status": r.get("PreMarketingStatus__c"),
             "verbal_confirmation_date": _parse_sf_date(r.get("Verbal_Confirmation_Date__c")),
-            "project_start_date": _parse_sf_date(r.get("Project_Start_Date__c")),
             "resume_preparation": r.get("Resume_Preparation__c"),
             "resume_verified_by_lead": r.get("Resume_Verified_By_Lead__c"),
             "resume_verified_by_manager": r.get("Resume_Verified_By_Manager__c"),
