@@ -1158,12 +1158,12 @@ async def sync_status(current_user=Depends(get_current_user)):
     return get_sync_status()
 
 @app.post("/api/sync/run")
-async def sync_run(current_user=Depends(get_current_user)):
+async def sync_run(full: bool = False, current_user=Depends(get_current_user)):
     if current_user["role"] != "admin":
         raise HTTPException(403, "Admin only")
     import asyncio
-    asyncio.create_task(run_sync())
-    return {"status": "sync_started"}
+    asyncio.create_task(run_sync(full=full))
+    return {"status": "sync_started", "mode": "full" if full else "incremental"}
 
 
 # ── AI Analytics ──────────────────────────────────────
