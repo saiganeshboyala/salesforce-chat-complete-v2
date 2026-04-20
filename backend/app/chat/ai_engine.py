@@ -773,16 +773,19 @@ async def _build_data_summary(records, true_total=None, soql_query=None):
             for field in groupable_fields[:4]:
                 try:
                     gq = f"SELECT {field}, COUNT(Id) cnt FROM {obj_name} {where_clause} GROUP BY {field} ORDER BY COUNT(Id) DESC LIMIT 30"
+                    logger.info(f"GROUP BY query: {gq}")
                     gr = await execute_query(gq)
+                    logger.info(f"GROUP BY {field} result: {len(gr.get('records', []))} rows, keys={list(gr.get('records', [{}])[0].keys()) if gr.get('records') else 'none'}")
                     if "error" not in gr and gr.get("records"):
                         counts = {}
                         for rec in gr["records"]:
                             val = rec.get(field)
-                            cnt = rec.get("cnt", 0)
+                            cnt = rec.get("cnt") or rec.get("count", 0)
                             if val and val != "None":
                                 counts[val] = cnt
                         if counts and len(counts) > 1:
                             group_by_results[field] = counts
+                            logger.info(f"GROUP BY {field} counts: {dict(list(counts.items())[:5])}")
                 except Exception as e:
                     logger.warning(f"GROUP BY {field} failed: {e}")
 
@@ -1182,10 +1185,10 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         if from_m:
             count_q = f"SELECT COUNT() FROM {from_m.group(1)}"
             if where_m:
-                # Remove __r traversals from WHERE for COUNT (they work but let's keep it simple)
                 count_q += f" {where_m.group(1)}"
             try:
                 count_result = await execute_query(count_q)
+                logger.info(f"Count query: {count_q} -> result keys: {list(count_result.keys()) if count_result else 'None'}")
                 if "error" not in count_result:
                     recs_count = count_result.get("records", [])
                     if recs_count and len(recs_count) == 1:
@@ -1199,7 +1202,8 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
                     result["totalSize"] = true_total
                     result["_limited"] = True
                     logger.info(f"True count: {true_total} (LIMIT returned {total_size})")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Count query failed: {e}")
                 pass
 
     if recs and not last_soql:
