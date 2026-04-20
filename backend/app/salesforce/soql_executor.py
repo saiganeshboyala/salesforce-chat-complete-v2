@@ -128,7 +128,7 @@ async def execute_soql(query, instance_url=None, access_token=None, force_salesf
         records = data.get("records", [])
         next_url = data.get("nextRecordsUrl")
 
-        while next_url and len(records) < 2000:
+        while next_url:
             resp = await client.get(f"{creds.instance_url}{next_url}", headers=headers)
             if resp.status_code != 200: break
             page = resp.json()
