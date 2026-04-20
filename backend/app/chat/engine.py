@@ -24,7 +24,7 @@ class ChatEngine:
             "content": question,
             "ts": now,
         }
-        session = append_message(username, session_id, user_msg)
+        session = await append_message(username, session_id, user_msg)
 
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -45,7 +45,7 @@ class ChatEngine:
             "question": question,
             "ts": datetime.now().isoformat(),
         }
-        append_message(username, session_id, asst_msg)
+        await append_message(username, session_id, asst_msg)
         return result
 
     async def answer_stream(self, session_id, question, username=None):
@@ -62,7 +62,7 @@ class ChatEngine:
             "content": question,
             "ts": now,
         }
-        session = append_message(username, session_id, user_msg)
+        session = await append_message(username, session_id, user_msg)
 
         history = [
             {"role": m["role"], "content": m["content"]}
@@ -88,7 +88,7 @@ class ChatEngine:
                 "question": question,
                 "ts": datetime.now().isoformat(),
             }
-            append_message(username, session_id, asst_msg)
+            await append_message(username, session_id, asst_msg)
 
     def get_welcome(self):
         schema = get_schema()

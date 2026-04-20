@@ -202,27 +202,13 @@ async def _db_toggle_pin(username, session_id):
         return new_state
 
 
-# ── Sync wrappers (called from sync code) ───────────
-def _run_async(coro):
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(coro)).result()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
-
-
-# ── Public API ───────────────────────────────────────
-def load_session(username: str | None, session_id: str) -> dict:
+# ── Public API (all async) ──────────────────────────
+async def load_session(username: str | None, session_id: str) -> dict:
     if not username:
         return _anon_sessions.get(session_id) or _new_session(session_id)
     if _use_db:
         try:
-            return _run_async(_db_load_session(username, session_id))
+            return await _db_load_session(username, session_id)
         except Exception as e:
             logger.warning(f"DB load session failed: {e}")
     p = _session_path(username, session_id)
@@ -236,14 +222,14 @@ def load_session(username: str | None, session_id: str) -> dict:
         return _new_session(session_id)
 
 
-def save_session(username: str | None, session: dict) -> None:
+async def save_session(username: str | None, session: dict) -> None:
     session["updated_at"] = datetime.now().isoformat()
     if not username:
         _anon_sessions[session["id"]] = session
         return
     if _use_db:
         try:
-            _run_async(_db_save_session(username, session))
+            await _db_save_session(username, session)
             return
         except Exception as e:
             logger.warning(f"DB save session failed: {e}")
@@ -255,16 +241,16 @@ def save_session(username: str | None, session: dict) -> None:
         tmp.replace(p)
 
 
-def append_message(username: str | None, session_id: str, message: dict) -> dict:
-    session = load_session(username, session_id)
+async def append_message(username: str | None, session_id: str, message: dict) -> dict:
+    session = await load_session(username, session_id)
     session["messages"].append(message)
     if session["title"] == "New Chat" and message.get("role") == "user":
         session["title"] = _make_title(message.get("content", ""))
-    save_session(username, session)
+    await save_session(username, session)
     return session
 
 
-def list_sessions(username: str | None) -> list[dict]:
+async def list_sessions(username: str | None) -> list[dict]:
     if not username:
         return [
             {"id": s["id"], "title": s["title"], "created_at": s["created_at"],
@@ -273,7 +259,7 @@ def list_sessions(username: str | None) -> list[dict]:
         ]
     if _use_db:
         try:
-            return _run_async(_db_list_sessions(username))
+            return await _db_list_sessions(username)
         except Exception as e:
             logger.warning(f"DB list sessions failed: {e}")
 
@@ -304,26 +290,26 @@ def _ts(s: str) -> float:
         return 0.0
 
 
-def toggle_pin(username: str | None, session_id: str) -> bool:
+async def toggle_pin(username: str | None, session_id: str) -> bool:
     if _use_db and username:
         try:
-            return _run_async(_db_toggle_pin(username, session_id))
+            return await _db_toggle_pin(username, session_id)
         except Exception as e:
             logger.warning(f"DB toggle pin failed: {e}")
 
-    session = load_session(username, session_id)
+    session = await load_session(username, session_id)
     new_state = not bool(session.get("pinned", False))
     session["pinned"] = new_state
-    save_session(username, session)
+    await save_session(username, session)
     return new_state
 
 
-def delete_session(username: str | None, session_id: str) -> bool:
+async def delete_session(username: str | None, session_id: str) -> bool:
     if not username:
         return _anon_sessions.pop(session_id, None) is not None
     if _use_db:
         try:
-            return _run_async(_db_delete_session(username, session_id))
+            return await _db_delete_session(username, session_id)
         except Exception as e:
             logger.warning(f"DB delete session failed: {e}")
 
@@ -334,14 +320,14 @@ def delete_session(username: str | None, session_id: str) -> bool:
     return False
 
 
-def search_sessions(username: str | None, query: str) -> list[dict]:
+async def search_sessions(username: str | None, query: str) -> list[dict]:
     q = (query or "").strip().lower()
     if not q:
-        return list_sessions(username)
+        return await list_sessions(username)
     results = []
-    sessions_meta = list_sessions(username)
+    sessions_meta = await list_sessions(username)
     for meta in sessions_meta:
-        full = load_session(username, meta["id"])
+        full = await load_session(username, meta["id"])
         if q in (full.get("title") or "").lower():
             results.append(meta)
             continue

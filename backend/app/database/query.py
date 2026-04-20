@@ -1163,18 +1163,18 @@ def soql_to_sql(soql: str) -> str | None:
     if not mapping:
         return None
 
-    table = mapping["table"]
+    table = f'"{mapping["table"]}"'
     fields = mapping["fields"]
 
     sql = soql
 
-    # Replace object name
+    # Replace object name with quoted table
     sql = re.sub(r'\bFROM\s+' + re.escape(sf_object), f'FROM {table}', sql, flags=re.IGNORECASE)
 
-    # Replace field names (longer names first to avoid partial replacements)
+    # Replace field names with quoted columns (longer names first to avoid partial replacements)
     sorted_fields = sorted(fields.items(), key=lambda x: -len(x[0]))
     for sf_field, pg_col in sorted_fields:
-        sql = re.sub(r'\b' + re.escape(sf_field) + r'\b', pg_col, sql)
+        sql = re.sub(r'\b' + re.escape(sf_field) + r'\b', f'"{pg_col}"', sql)
 
     # Handle LAST_N_DAYS:X first
     last_n_match = re.findall(r'LAST_N_DAYS:(\d+)', sql)
@@ -1213,8 +1213,8 @@ def soql_to_sql(soql: str) -> str | None:
             sql = sql.replace(m.group(0), f"{col}::date = {pg_val}")
 
     # Handle COUNT(Id/sf_id) → COUNT(*)
-    sql = re.sub(r'COUNT\(Id\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
-    sql = re.sub(r'COUNT\(sf_id\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'COUNT\("?Id"?\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'COUNT\("?sf_id"?\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
     sql = re.sub(r'COUNT\(\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
 
     # Handle NULLS LAST
@@ -1230,9 +1230,9 @@ def soql_to_sql(soql: str) -> str | None:
             sub_mapping = SF_TO_PG.get(sub_obj)
             if sub_mapping:
                 new_sub = sub_sql
-                new_sub = re.sub(r'\bFROM\s+' + re.escape(sub_obj), f'FROM {sub_mapping["table"]}', new_sub)
+                new_sub = re.sub(r'\bFROM\s+' + re.escape(sub_obj), f'FROM "{sub_mapping["table"]}"', new_sub)
                 for sf_f, pg_c in sorted(sub_mapping["fields"].items(), key=lambda x: -len(x[0])):
-                    new_sub = re.sub(r'\b' + re.escape(sf_f) + r'\b', pg_c, new_sub)
+                    new_sub = re.sub(r'\b' + re.escape(sf_f) + r'\b', f'"{pg_c}"', new_sub)
                 sql = sql[:sm.start()] + new_sub + sql[sm.end():]
 
     # Handle COUNT() as alias 'cnt'
@@ -1242,6 +1242,9 @@ def soql_to_sql(soql: str) -> str | None:
     # Clean up any remaining Salesforce-specific syntax
     sql = sql.replace("= null", "IS NULL")
     sql = re.sub(r"!= null", "IS NOT NULL", sql)
+
+    # Fix double-quoting that may occur
+    sql = sql.replace('""', '"')
 
     return sql
 
@@ -1412,9 +1415,9 @@ async def execute_query(soql: str) -> dict:
             return result
         logger.warning(f"PostgreSQL failed, falling back to Salesforce: {result['error'][:150]}")
 
-    # Fallback to Salesforce
+    # Fallback to Salesforce (skip PostgreSQL retry in execute_soql)
     from app.salesforce.soql_executor import execute_soql
     logger.info(f"Using Salesforce API: {soql[:150]}")
-    return await execute_soql(soql)
+    return await execute_soql(soql, force_salesforce=True)
 
 

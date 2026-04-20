@@ -157,10 +157,10 @@ async def login(req: LoginRequest, request: Request):
     user = authenticate_user(req.username, req.password)
     ip = request.client.host if request.client else ""
     if not user:
-        audit.log_action(req.username, "login_failed", {"reason": "bad_credentials"}, ip)
+        await audit.log_action(req.username, "login_failed", {"reason": "bad_credentials"}, ip)
         raise HTTPException(401, "Invalid username or password")
     token = create_token(user["username"], user.get("role", "user"))
-    audit.log_action(user["username"], "login", {}, ip)
+    await audit.log_action(user["username"], "login", {}, ip)
     return {
         "token": token,
         "user": {"username": user["username"], "name": user.get("name", ""), "role": user.get("role", "user")},
@@ -225,7 +225,7 @@ async def chat(req: ChatRequest, request: Request, user=Depends(get_optional_use
             if ctx:
                 question = f"{ctx}\n\n---\n\nUser question: {req.question}"
         result = await chat_engine.answer(req.session_id, question, username=username)
-        audit.log_action(
+        await audit.log_action(
             username, "chat_question",
             {"question": (req.question or "")[:100]},
             request.client.host if request.client else "",
@@ -252,7 +252,7 @@ async def chat_stream(req: ChatRequest, request: Request, user=Depends(get_optio
         if ctx:
             question = f"{ctx}\n\n---\n\nUser question: {req.question}"
 
-    audit.log_action(
+    await audit.log_action(
         username, "chat_question",
         {"question": (req.question or "")[:100]},
         request.client.host if request.client else "",
@@ -294,7 +294,7 @@ class FeedbackRequest(BaseModel):
 @app.post("/api/feedback")
 async def feedback(req: FeedbackRequest, request: Request, user=Depends(get_optional_user)):
     update_feedback(req.question, req.feedback)
-    audit.log_action(
+    await audit.log_action(
         (user or {}).get("username"),
         "feedback",
         {"question": (req.question or "")[:50], "type": req.feedback},
@@ -320,18 +320,18 @@ async def history(current_user=Depends(get_current_user)):
 async def sessions_list(q: str | None = None, current_user=Depends(get_current_user)):
     username = current_user["username"]
     if q:
-        return search_user_sessions(username, q)
-    return list_user_sessions(username)
+        return await search_user_sessions(username, q)
+    return await list_user_sessions(username)
 
 
 @app.get("/api/sessions/{session_id}")
 async def sessions_get(session_id: str, current_user=Depends(get_current_user)):
-    return load_user_session(current_user["username"], session_id)
+    return await load_user_session(current_user["username"], session_id)
 
 
 @app.delete("/api/sessions/{session_id}")
 async def sessions_delete(session_id: str, current_user=Depends(get_current_user)):
-    ok = delete_user_session(current_user["username"], session_id)
+    ok = await delete_user_session(current_user["username"], session_id)
     if not ok:
         raise HTTPException(404, "Session not found")
     return {"status": "deleted"}
@@ -339,7 +339,7 @@ async def sessions_delete(session_id: str, current_user=Depends(get_current_user
 
 @app.post("/api/sessions/{session_id}/pin")
 async def sessions_pin(session_id: str, current_user=Depends(get_current_user)):
-    pinned = toggle_session_pin(current_user["username"], session_id)
+    pinned = await toggle_session_pin(current_user["username"], session_id)
     return {"pinned": pinned}
 
 
@@ -357,7 +357,7 @@ async def audit_list(
 ):
     if current_user["role"] != "admin":
         raise HTTPException(403, "Admin only")
-    return audit.query_log(user=user, action=action, start=start, end=end, page=page, page_size=page_size)
+    return await audit.query_log(user=user, action=action, start=start, end=end, page=page, page_size=page_size)
 
 
 # ── Admin: password reset ──────────────────────────────
@@ -782,7 +782,7 @@ async def export_pdf(req: PdfExportRequest, request: Request, user=Depends(get_o
     from app.pdf_export import build_pdf
     try:
         username = (user or {}).get("username", "user")
-        audit.log_action(
+        await audit.log_action(
             username, "export",
             {"format": "pdf", "query": (req.soql or "")[:100]},
             request.client.host if request.client else "",
@@ -1262,7 +1262,7 @@ Return ONLY the JSON array."""
                 card["records"] = []
             results.append(card)
 
-        audit.log_action(
+        await audit.log_action(
             username, "analytics_generate",
             {"prompt": req.prompt[:100], "cards": len(results)},
             request.client.host if request.client else "",

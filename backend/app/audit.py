@@ -46,19 +46,6 @@ def _save(entries: list[dict]) -> None:
 
 
 # ── DB operations ────────────────────────────────────
-def _run_async(coro):
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(coro)).result()
-        return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
-
-
 async def _db_log(username, action, details, ip_address):
     from app.database.engine import async_session
     from app.database.models import AuditLog
@@ -127,10 +114,10 @@ async def _db_query(user, action, start, end, page, page_size):
 
 
 # ── Public API ───────────────────────────────────────
-def log_action(username: str | None, action: str, details: dict | None = None, ip_address: str | None = None) -> None:
+async def log_action(username: str | None, action: str, details: dict | None = None, ip_address: str | None = None) -> None:
     if _use_db:
         try:
-            _run_async(_db_log(username, action, details, ip_address))
+            await _db_log(username, action, details, ip_address)
             return
         except Exception as e:
             logger.warning(f"DB audit log failed: {e}")
@@ -153,7 +140,7 @@ def log_action(username: str | None, action: str, details: dict | None = None, i
         logger.warning(f"Audit log write failed: {e}")
 
 
-def query_log(
+async def query_log(
     user: str | None = None,
     action: str | None = None,
     start: str | None = None,
@@ -163,7 +150,7 @@ def query_log(
 ) -> dict:
     if _use_db:
         try:
-            return _run_async(_db_query(user, action, start, end, page, page_size))
+            return await _db_query(user, action, start, end, page, page_size)
         except Exception as e:
             logger.warning(f"DB audit query failed: {e}")
 
