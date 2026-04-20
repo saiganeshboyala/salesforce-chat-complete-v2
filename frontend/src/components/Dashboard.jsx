@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Cartes
 import { api } from '../services/api'
 import { useToast } from '../hooks/useToast'
 
-const COLORS = ['#e8734a', '#4a9ee8', '#4ae87a', '#e8d44a', '#a74ae8', '#e84a5a', '#4ae8d4', '#e8a44a']
+const COLORS = ['#2F5486', '#4a9ee8', '#4ae87a', '#e8d44a', '#a74ae8', '#e84a5a', '#4ae8d4', '#e8a44a']
 const tooltipStyle = {
   contentStyle: { background: '#19191f', border: '1px solid #2a2a36', borderRadius: 10, color: '#e8e8ec', fontSize: 12 },
 }

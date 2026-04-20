@@ -5,8 +5,8 @@ import {
   PieChart, Pie, Cell, CartesianGrid, LineChart, Line, Legend,
 } from 'recharts'
 
-const COLORS = ['#e8734a', '#4a9ee8', '#4ae87a', '#e8d44a', '#a74ae8', '#e84a8a', '#4ae8d4', '#e8a44a', '#7ae84a', '#4a74e8']
-const FUNNEL_COLORS = ['#4a9ee8', '#4ae87a', '#e8d44a', '#e8734a', '#a74ae8', '#e84a8a']
+const COLORS = ['#2F5486', '#4a9ee8', '#4ae87a', '#e8d44a', '#a74ae8', '#e84a8a', '#4ae8d4', '#e8a44a', '#7ae84a', '#4a74e8']
+const FUNNEL_COLORS = ['#4a9ee8', '#4ae87a', '#e8d44a', '#2F5486', '#a74ae8', '#e84a8a']
 
 const tooltipStyle = {
   contentStyle: { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 },
@@ -118,8 +118,8 @@ function LineCard({ card, onDrill }) {
             dot={{ r: 4, fill: '#4a9ee8', cursor: 'pointer' }} connectNulls={false}
             name={mainKey.charAt(0).toUpperCase() + mainKey.slice(1)} />
         )}
-        <Line type="monotone" dataKey="predicted" stroke="#e8734a" strokeWidth={2} strokeDasharray="6 3"
-          dot={{ r: 5, fill: '#e8734a', strokeWidth: 2, stroke: '#fff' }} name="Predicted (Next Month)" />
+        <Line type="monotone" dataKey="predicted" stroke="#2F5486" strokeWidth={2} strokeDasharray="6 3"
+          dot={{ r: 5, fill: '#2F5486', strokeWidth: 2, stroke: '#fff' }} name="Predicted (Next Month)" />
       </LineChart>
     </ResponsiveContainer>
   )

@@ -48,9 +48,9 @@
   --text-primary: #1a1a22;
   --text-secondary: #5a5a6e;
   --text-muted: #9898a8;
-  --accent: #e8734a;
-  --accent-hover: #d8623a;
-  --accent-muted: rgba(232, 115, 74, 0.12);
+  --accent: #2F5486;
+  --accent-hover: #254470;
+  --accent-muted: rgba(47, 84, 134, 0.12);
   --success: #2ea858;
   --danger: #d8323f;
   --info: #2a7fd4;
@@ -536,7 +536,7 @@ body {
 }
 .audit-action-login    { background: rgba(74,158,232,0.15); color: #4a9ee8; }
 .audit-action-chat     { background: rgba(74,232,122,0.15); color: #4ae87a; }
-.audit-action-export   { background: rgba(232,115,74,0.15); color: #e8734a; }
+.audit-action-export   { background: rgba(47,84,134,0.15); color: #2F5486; }
 .audit-action-error    { background: rgba(232,74,90,0.15); color: #e84a5a; }
 .audit-action-default  { background: var(--bg-elevated); color: var(--text-muted); }
 .audit-pagination { display: flex; align-items: center; gap: 12px; margin-top: 14px; justify-content: center; }

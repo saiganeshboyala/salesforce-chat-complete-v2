@@ -6,7 +6,7 @@ const tooltipStyle = {
   contentStyle: { background: '#19191f', border: '1px solid #2a2a36', borderRadius: 10, color: '#e8e8ec', fontSize: 12 },
 }
 const COLOR_A = '#4a9ee8'
-const COLOR_B = '#e8734a'
+const COLOR_B = '#2F5486'
 
 function asChartData(result) {
   const records = result?.records || []

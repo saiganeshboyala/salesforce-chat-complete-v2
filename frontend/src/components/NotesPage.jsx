@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api'
 
-const TAG_PALETTE = ['#4a9ee8', '#e8734a', '#8ac24a', '#b762d9', '#e8c94a', '#ea5a75', '#4ad9c4', '#a59584']
+const TAG_PALETTE = ['#4a9ee8', '#2F5486', '#8ac24a', '#b762d9', '#e8c94a', '#ea5a75', '#4ad9c4', '#a59584']
 function tagColor(tag) {
   let h = 0
   for (let i = 0; i < tag.length; i++) h = (h * 31 + tag.charCodeAt(i)) & 0xffff

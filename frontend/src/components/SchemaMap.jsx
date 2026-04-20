@@ -282,7 +282,7 @@ export default function SchemaMap() {
             >
               <defs>
                 <marker id="arrow-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#e8734a" />
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#2F5486" />
                 </marker>
                 <marker id="arrow-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#4a9ee8" />
@@ -313,7 +313,7 @@ export default function SchemaMap() {
                   <g key={`edge-${node.id}`}>
                     <line
                       x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke={outgoing ? '#e8734a' : '#4a9ee8'}
+                      stroke={outgoing ? '#2F5486' : '#4a9ee8'}
                       strokeWidth={isSel ? 2.4 : 1.2}
                       strokeOpacity={isSel ? 1 : 0.55}
                       markerEnd={outgoing ? 'url(#arrow-out)' : 'url(#arrow-in)'}
@@ -355,7 +355,7 @@ export default function SchemaMap() {
                     <circle
                       r={r}
                       fill={nodeFill(node.record_count, maxCount)}
-                      stroke={isSel ? '#e8734a' : '#3a3a4a'}
+                      stroke={isSel ? '#2F5486' : '#3a3a4a'}
                       strokeWidth={isSel ? 2.6 : 1.2}
                     />
                     <text
@@ -382,8 +382,8 @@ export default function SchemaMap() {
                     onMouseDown={e => onNodeMouseDown(e, focusNode.id)}
                     style={{ cursor: 'pointer' }}
                   >
-                    <circle r={r + 4} fill="none" stroke="#e8734a" strokeWidth={2} opacity={0.55} />
-                    <circle r={r} fill={nodeFill(focusNode.record_count, maxCount)} stroke="#e8734a" strokeWidth={3} />
+                    <circle r={r + 4} fill="none" stroke="#2F5486" strokeWidth={2} opacity={0.55} />
+                    <circle r={r} fill={nodeFill(focusNode.record_count, maxCount)} stroke="#2F5486" strokeWidth={3} />
                     <text
                       textAnchor="middle"
                       y={4}
@@ -401,7 +401,7 @@ export default function SchemaMap() {
               {/* Legend */}
               <g transform={`translate(20, ${VIEW_H - 70})`} pointerEvents="none">
                 <rect width="200" height="58" rx="8" fill="rgba(25,25,31,0.85)" stroke="#2a2a36" />
-                <line x1="12" y1="20" x2="40" y2="20" stroke="#e8734a" strokeWidth="2" markerEnd="url(#arrow-out)" />
+                <line x1="12" y1="20" x2="40" y2="20" stroke="#2F5486" strokeWidth="2" markerEnd="url(#arrow-out)" />
                 <text x="48" y="24" fontSize="11" fill="#e8e8ec">outgoing (lookup)</text>
                 <line x1="12" y1="42" x2="40" y2="42" stroke="#4a9ee8" strokeWidth="2" markerEnd="url(#arrow-in)" />
                 <text x="48" y="46" fontSize="11" fill="#e8e8ec">incoming</text>
