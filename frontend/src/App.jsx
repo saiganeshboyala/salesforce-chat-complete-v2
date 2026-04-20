@@ -16,6 +16,7 @@ import ComparisonPage from './components/ComparisonPage'
 import AlertsPage from './components/AlertsPage'
 import NotesPage from './components/NotesPage'
 import ReportBuilder from './components/ReportBuilder'
+import AnalyticsPage from './components/AnalyticsPage'
 import { useChat } from './hooks/useChat'
 import { useToast } from './hooks/useToast'
 import { useTranslation, LANGUAGES } from './utils/i18n'
@@ -45,6 +46,7 @@ const I = {
   bell: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>,
   note: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
   report: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-5"/></svg>,
+  analytics: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
 }
 
 const timeStr = (d) => d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
@@ -228,9 +230,6 @@ function LoginPage({ onLogin }) {
           {loading ? t('login.signingIn') : t('login.signIn')}
         </button>
 
-        <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 16 }}>
-          {t('login.default')}
-        </p>
       </form>
     </div>
   )
@@ -368,6 +367,7 @@ export default function App() {
   }
 
   const handleDashAsk = (q) => { setView('chat'); setTimeout(() => send(q), 100) }
+  const handleAnalyticsDrill = (q) => { setView('chat'); setTimeout(() => send(q), 100) }
 
   const closeSidebar = () => setSidebarOpen(false)
 
@@ -441,6 +441,9 @@ export default function App() {
             </div>
             <div className={`nav-item ${view === 'reports' ? 'active' : ''}`} onClick={() => handleNavClick('reports')}>
               {I.report} <span>Reports</span>
+            </div>
+            <div className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => handleNavClick('analytics')}>
+              {I.analytics} <span>AI Analytics</span>
             </div>
             <div className={`nav-item ${view === 'schema' ? 'active' : ''}`} onClick={() => handleNavClick('schema')}>
               {I.graph} <span>{t('sidebar.schema')}</span>
@@ -534,6 +537,8 @@ export default function App() {
           <NotesPage />
         ) : view === 'reports' ? (
           <ReportBuilder />
+        ) : view === 'analytics' ? (
+          <AnalyticsPage onDrillDown={handleAnalyticsDrill} />
         ) : (
           <>
             <div className="chat-header">

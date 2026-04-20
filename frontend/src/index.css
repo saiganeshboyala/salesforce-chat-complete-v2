@@ -1465,3 +1465,208 @@ body {
   .rb-row { grid-template-columns: 1fr; }
   .rb-filter-row { grid-template-columns: 1fr; }
 }
+
+/* ── AI Analytics Page ────────────────────────────── */
+.analytics-page {
+  padding: 24px;
+  overflow-y: auto;
+  height: 100%;
+}
+.analytics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+.analytics-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+.analytics-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+.analytics-time {
+  opacity: 0.7;
+}
+.analytics-error {
+  background: rgba(232, 84, 84, 0.1);
+  border: 1px solid rgba(232, 84, 84, 0.3);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #e85454;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.analytics-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 40px;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 20px;
+}
+.analytics-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  overflow: hidden;
+}
+.analytics-card-wide {
+  grid-column: 1 / -1;
+}
+.analytics-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.analytics-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.analytics-card-badge {
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.analytics-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 16px;
+}
+.analytics-card-chart {
+  min-height: 200px;
+}
+
+/* Funnel */
+.analytics-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.analytics-funnel-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.analytics-funnel-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  width: 140px;
+  flex-shrink: 0;
+  text-align: right;
+}
+.analytics-funnel-bar-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.analytics-funnel-bar {
+  height: 28px;
+  border-radius: 6px;
+  transition: width 0.5s ease;
+}
+.analytics-funnel-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Metric card */
+.analytics-metric-card {
+  text-align: center;
+  padding: 16px;
+}
+.analytics-metric-value {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.analytics-metric-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+.analytics-metric-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 260px;
+  margin: 0 auto;
+}
+.analytics-metric-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.analytics-metric-detail strong {
+  margin-left: auto;
+  color: var(--text-primary);
+}
+.analytics-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Table inside analytics */
+.analytics-table-scroll {
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Drill-down clickable */
+.analytics-clickable {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.analytics-clickable:hover {
+  background: var(--bg-hover);
+}
+.analytics-funnel-row.analytics-clickable:hover .analytics-funnel-bar {
+  filter: brightness(1.15);
+}
+.analytics-metric-detail.analytics-clickable:hover {
+  background: var(--bg-hover);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+}
+.analytics-card-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 12px;
+  opacity: 0.6;
+}
+
+@media (max-width: 768px) {
+  .analytics-grid { grid-template-columns: 1fr; }
+  .analytics-header { flex-direction: column; }
+  .analytics-funnel-label { width: 100px; font-size: 11px; }
+  .analytics-page { padding: 16px; }
+}

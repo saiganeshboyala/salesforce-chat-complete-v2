@@ -36,6 +36,7 @@ from app import compare as compare_mod
 from app import alerts as alerts_mod
 from app import annotations as annotations_mod
 from app import reports as reports_mod
+from app import analytics as analytics_mod
 from app.connectors import gmail as gmail_conn
 from app.connectors import google_oauth as google_oauth
 from app.salesforce.schema import get_schema, discover_schema, get_relationships
@@ -1114,6 +1115,17 @@ async def ai_providers(current_user=Depends(get_current_user)):
     if settings.openai_api_key:
         providers.append({"id": "openai", "name": "OpenAI", "model": settings.openai_model, "active": True})
     return {"providers": providers}
+
+
+# ── Predictive Analytics ─────────────────────────────
+
+@app.get("/api/analytics/predictive")
+async def analytics_predictive(current_user=Depends(get_current_user)):
+    try:
+        return await analytics_mod.compute_analytics()
+    except Exception as e:
+        logger.error(f"Predictive analytics error: {e}")
+        raise HTTPException(500, str(e))
 
 
 # ── AI Analytics ──────────────────────────────────────

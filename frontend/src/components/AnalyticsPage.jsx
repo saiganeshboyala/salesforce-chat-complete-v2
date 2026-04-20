@@ -1,137 +1,204 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../services/api'
-import { useToast } from '../hooks/useToast'
-import DataChart from './DataChart'
-import DataTable from './DataTable'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, CartesianGrid, LineChart, Line, Legend,
+} from 'recharts'
 
-const SUGGESTIONS = [
-  'Overview of all students by marketing status',
-  'Account distribution and contact summary',
-  'Top 10 accounts by number of contacts',
-  'Monthly student trends and pipeline analysis',
-  'Compare students in market vs verbal confirmations',
-]
+const COLORS = ['#e8734a', '#4a9ee8', '#4ae87a', '#e8d44a', '#a74ae8', '#e84a8a', '#4ae8d4', '#e8a44a', '#7ae84a', '#4a74e8']
+const FUNNEL_COLORS = ['#4a9ee8', '#4ae87a', '#e8d44a', '#e8734a', '#a74ae8', '#e84a8a']
 
-function MetricCard({ card }) {
-  const val = card.totalSize ?? card.records?.length ?? 0
+const tooltipStyle = {
+  contentStyle: { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', fontSize: 12 },
+  itemStyle: { color: 'var(--text-primary)' },
+}
+
+function MetricCard({ card, onDrill }) {
+  const main = card.metric || {}
   return (
     <div className="analytics-metric-card">
-      <div className="analytics-metric-value">{val.toLocaleString()}</div>
-      <div className="analytics-metric-title">{card.title}</div>
-      <div className="analytics-metric-desc">{card.description}</div>
+      <div className="analytics-metric-value">{main.value}</div>
+      <div className="analytics-metric-label">{main.label}</div>
+      <div className="analytics-metric-details">
+        {card.data.map((d, i) => (
+          <div key={i} className="analytics-metric-detail analytics-clickable" onClick={() => d.drilldown && onDrill(d.drilldown)}>
+            <span className="analytics-dot" style={{ background: d.color || COLORS[i] }} />
+            <span>{d.label}</span>
+            <strong>{d.value?.toLocaleString()}</strong>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-function ChartCard({ card }) {
-  const records = card.records || []
-  if (records.length === 0) {
-    return (
-      <div className="analytics-chart-card">
-        <h4 className="analytics-card-title">{card.title}</h4>
-        <p className="analytics-card-desc">{card.description}</p>
-        {card.error ? (
-          <div className="analytics-card-error">{card.error}</div>
-        ) : (
-          <div className="analytics-card-empty">No data</div>
-        )}
-      </div>
-    )
+function FunnelChart({ data, onDrill }) {
+  const max = Math.max(...data.map(d => d.count))
+  return (
+    <div className="analytics-funnel">
+      {data.map((d, i) => {
+        const pct = max > 0 ? (d.count / max * 100) : 0
+        return (
+          <div key={i} className="analytics-funnel-row analytics-clickable" onClick={() => d.drilldown && onDrill(d.drilldown)}>
+            <div className="analytics-funnel-label">{d.stage}</div>
+            <div className="analytics-funnel-bar-wrap">
+              <div
+                className="analytics-funnel-bar"
+                style={{ width: `${Math.max(pct, 3)}%`, background: FUNNEL_COLORS[i % FUNNEL_COLORS.length] }}
+              />
+              <span className="analytics-funnel-count">{d.count.toLocaleString()}</span>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function BarCard({ data, onDrill }) {
+  const handleClick = (entry) => {
+    if (entry?.drilldown) onDrill(entry.drilldown)
+  }
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(220, data.length * 36)}>
+      <BarChart data={data} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}
+        onClick={(e) => e?.activePayload?.[0]?.payload && handleClick(e.activePayload[0].payload)}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+        <XAxis type="number" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={{ stroke: 'var(--border)' }} />
+        <YAxis type="category" dataKey="name" width={130} tick={{ fill: 'var(--text-primary)', fontSize: 11 }} axisLine={false} tickLine={false} />
+        <Tooltip {...tooltipStyle} formatter={v => [v.toLocaleString(), 'Count']} />
+        <Bar dataKey="value" radius={[0, 5, 5, 0]} barSize={20} style={{ cursor: 'pointer' }}>
+          {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+function PieCard({ data, onDrill }) {
+  const handleClick = (_, idx) => {
+    if (data[idx]?.drilldown) onDrill(data[idx].drilldown)
+  }
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <PieChart>
+        <Pie data={data} cx="50%" cy="50%" outerRadius={100} innerRadius={50} dataKey="value"
+          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+          labelLine={{ stroke: 'var(--text-muted)', strokeWidth: 0.5 }} stroke="none"
+          onClick={handleClick} style={{ cursor: 'pointer' }}>
+          {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+        </Pie>
+        <Tooltip {...tooltipStyle} formatter={v => [v.toLocaleString(), 'Count']} />
+      </PieChart>
+    </ResponsiveContainer>
+  )
+}
+
+function LineCard({ card, onDrill }) {
+  const data = card.data || []
+  const keys = Object.keys(data[0] || {}).filter(k => k !== 'month' && k !== 'drilldown' && k !== 'predicted')
+  const mainKey = keys[0]
+
+  const handleClick = (e) => {
+    if (e?.activePayload?.[0]?.payload?.drilldown) {
+      onDrill(e.activePayload[0].payload.drilldown)
+    }
   }
 
   return (
-    <div className="analytics-chart-card">
-      <h4 className="analytics-card-title">{card.title}</h4>
-      <p className="analytics-card-desc">{card.description}</p>
-      {card.chartType === 'table' ? (
-        <DataTable records={records} />
-      ) : (
-        <DataChart records={records} />
-      )}
-      {card.soql && (
-        <div className="analytics-card-soql">{card.soql}</div>
-      )}
-    </div>
+    <ResponsiveContainer width="100%" height={280}>
+      <LineChart data={data} margin={{ left: 10, right: 20, top: 10, bottom: 5 }} onClick={handleClick}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="month" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={{ stroke: 'var(--border)' }} />
+        <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={{ stroke: 'var(--border)' }} />
+        <Tooltip {...tooltipStyle} />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
+        {mainKey && (
+          <Line type="monotone" dataKey={mainKey} stroke="#4a9ee8" strokeWidth={2}
+            dot={{ r: 4, fill: '#4a9ee8', cursor: 'pointer' }} connectNulls={false}
+            name={mainKey.charAt(0).toUpperCase() + mainKey.slice(1)} />
+        )}
+        <Line type="monotone" dataKey="predicted" stroke="#e8734a" strokeWidth={2} strokeDasharray="6 3"
+          dot={{ r: 5, fill: '#e8734a', strokeWidth: 2, stroke: '#fff' }} name="Predicted (Next Month)" />
+      </LineChart>
+    </ResponsiveContainer>
   )
 }
 
-function InsightPanel({ insight }) {
-  if (!insight) return null
-  const html = insight
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-    .replace(/\n/g, '<br/>')
+function TableCard({ data, onDrill }) {
+  if (!data?.length) return null
+  const cols = Object.keys(data[0]).filter(k => k !== 'drilldown')
   return (
-    <div className="analytics-insight-panel">
-      <h4 className="analytics-insight-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-        AI Insights
-      </h4>
-      <div className="analytics-insight-body" dangerouslySetInnerHTML={{ __html: html }} />
+    <div className="analytics-table-scroll">
+      <table className="data-table">
+        <thead>
+          <tr>
+            {cols.map(c => (
+              <th key={c}>{c.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((r, i) => (
+            <tr key={i} className="analytics-clickable" onClick={() => r.drilldown && onDrill(r.drilldown)}>
+              {cols.map(c => (
+                <td key={c}>{typeof r[c] === 'number' ? r[c].toLocaleString() : r[c] ?? '\u2014'}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
 
-export default function AnalyticsPage() {
-  const toast = useToast()
-  const [prompt, setPrompt] = useState('')
+function AnalyticsCard({ card, onDrill }) {
+  return (
+    <div className={`analytics-card ${card.chartType === 'line' ? 'analytics-card-wide' : ''}`}>
+      <div className="analytics-card-header">
+        <h3 className="analytics-card-title">{card.title}</h3>
+        {card.metric && card.chartType !== 'metric' && (
+          <span className="analytics-card-badge">{card.metric.label}: {card.metric.value}</span>
+        )}
+      </div>
+      <p className="analytics-card-desc">{card.description}</p>
+      <div className="analytics-card-chart">
+        {card.chartType === 'funnel' && <FunnelChart data={card.data} onDrill={onDrill} />}
+        {card.chartType === 'bar' && <BarCard data={card.data} onDrill={onDrill} />}
+        {card.chartType === 'pie' && <PieCard data={card.data} onDrill={onDrill} />}
+        {card.chartType === 'line' && <LineCard card={card} onDrill={onDrill} />}
+        {card.chartType === 'metric' && <MetricCard card={card} onDrill={onDrill} />}
+        {card.chartType === 'table' && <TableCard data={card.data} onDrill={onDrill} />}
+      </div>
+      <div className="analytics-card-hint">Click any item to drill down</div>
+    </div>
+  )
+}
+
+export default function AnalyticsPage({ onDrillDown }) {
   const [cards, setCards] = useState([])
-  const [insight, setInsight] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [insightLoading, setInsightLoading] = useState(false)
-  const [lastPrompt, setLastPrompt] = useState('')
-  const [providers, setProviders] = useState([])
-  const [provider, setProvider] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [generatedAt, setGeneratedAt] = useState('')
 
-  // Load available AI providers
-  useEffect(() => {
-    api.aiProviders()
-      .then(d => {
-        setProviders(d.providers || [])
-        if (!provider && d.providers?.length) setProvider(d.providers[0].id)
-      })
-      .catch(() => {})
-  }, [])
-
-  const generate = useCallback(async (text) => {
-    const q = (text || prompt).trim()
-    if (!q) return
+  const load = async () => {
     setLoading(true)
-    setCards([])
-    setInsight('')
-    setLastPrompt(q)
+    setError('')
     try {
-      const res = await api.analyticsGenerate(q, provider || undefined)
+      const res = await api.predictiveAnalytics()
       setCards(res.cards || [])
-
-      // Auto-generate insight
-      setInsightLoading(true)
-      try {
-        const ins = await api.analyticsInsight(q, res.cards || [], provider || undefined)
-        setInsight(ins.insight || '')
-      } catch (e) {
-        console.error('Insight error:', e)
-      } finally {
-        setInsightLoading(false)
-      }
+      setGeneratedAt(res.generated_at || '')
     } catch (e) {
-      toast.error(e.message)
+      setError(e.message)
     } finally {
       setLoading(false)
     }
-  }, [prompt, provider, toast])
-
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    generate()
   }
 
-  const handleSuggestion = (s) => {
-    setPrompt(s)
-    generate(s)
+  useEffect(() => { load() }, [])
+
+  const handleDrill = (question) => {
+    if (onDrillDown) onDrillDown(question)
   }
 
   return (
@@ -139,103 +206,29 @@ export default function AnalyticsPage() {
       <div className="analytics-header">
         <div>
           <h2 className="analytics-title">AI Analytics</h2>
-          <div className="analytics-subtitle">
-            Ask anything about your Salesforce data — Claude generates live charts and insights.
-          </div>
+          <p className="analytics-subtitle">
+            Predictive insights from your Salesforce data
+            {generatedAt && <span className="analytics-time"> — {new Date(generatedAt).toLocaleString()}</span>}
+          </p>
         </div>
+        <button className="btn-primary" onClick={load} disabled={loading}>
+          {loading ? 'Loading...' : 'Refresh'}
+        </button>
       </div>
 
-      {/* Search bar */}
-      <form className="analytics-search" onSubmit={handleSubmit}>
-        <div className="analytics-search-row">
-          <input
-            className="input-field analytics-search-input"
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder="e.g. Show me student distribution by marketing status with trends..."
-            disabled={loading}
-          />
-          {providers.length > 0 && (
-            <select
-              className="input-field analytics-provider-select"
-              value={provider}
-              onChange={e => setProvider(e.target.value)}
-              disabled={loading}
-              title="AI Provider"
-            >
-              {providers.map(p => (
-                <option key={p.id} value={p.id}>{p.name} ({p.model})</option>
-              ))}
-            </select>
-          )}
-          <button className="btn-primary" type="submit" disabled={loading || !prompt.trim()}>
-            {loading ? 'Analyzing...' : 'Generate'}
-          </button>
-        </div>
-      </form>
+      {error && <div className="analytics-error">{error}</div>}
 
-      {/* Suggestions (show when no cards) */}
-      {cards.length === 0 && !loading && (
-        <div className="analytics-suggestions">
-          <div className="analytics-suggestions-label">Try these:</div>
-          <div className="analytics-suggestions-list">
-            {SUGGESTIONS.map((s, i) => (
-              <button
-                key={i}
-                className="analytics-suggestion-chip"
-                onClick={() => handleSuggestion(s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Loading */}
-      {loading && (
+      {loading ? (
         <div className="analytics-loading">
-          <div className="analytics-spinner" />
-          <div>Analyzing your Salesforce data...</div>
+          <span className="thinking-asterisk">*</span>
+          <span>Analyzing your Salesforce data...</span>
         </div>
-      )}
-
-      {/* Results */}
-      {cards.length > 0 && (
-        <>
-          {/* Metric cards row */}
-          {cards.filter(c => c.chartType === 'metric').length > 0 && (
-            <div className="analytics-metrics-row">
-              {cards.filter(c => c.chartType === 'metric').map((c, i) => (
-                <MetricCard key={i} card={c} />
-              ))}
-            </div>
-          )}
-
-          {/* Chart cards grid */}
-          <div className="analytics-cards-grid">
-            {cards.filter(c => c.chartType !== 'metric').map((c, i) => (
-              <ChartCard key={i} card={c} />
-            ))}
-          </div>
-
-          {/* AI Insight */}
-          {insightLoading ? (
-            <div className="analytics-loading" style={{ padding: '20px 24px' }}>
-              <div className="analytics-spinner" />
-              <div>Generating insights...</div>
-            </div>
-          ) : (
-            <InsightPanel insight={insight} />
-          )}
-
-          {/* Regenerate */}
-          <div className="analytics-actions">
-            <button className="btn-small" onClick={() => generate(lastPrompt)} disabled={loading}>
-              Regenerate
-            </button>
-          </div>
-        </>
+      ) : (
+        <div className="analytics-grid">
+          {cards.map(card => (
+            <AnalyticsCard key={card.id} card={card} onDrill={handleDrill} />
+          ))}
+        </div>
       )}
     </div>
   )

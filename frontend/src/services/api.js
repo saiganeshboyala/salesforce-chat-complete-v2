@@ -141,6 +141,9 @@ export const api = {
   testAiConnector:     (id)          => request(`/connectors/${encodeURIComponent(id)}/test`, { method: 'POST' }),
   aiProviders:         ()            => request('/ai/providers'),
 
+  // Predictive Analytics
+  predictiveAnalytics: ()            => request('/analytics/predictive'),
+
   // AI Analytics
   analyticsGenerate:   (prompt, provider) => request('/analytics/generate', { method: 'POST', body: JSON.stringify({ prompt, provider }) }),
   analyticsInsight:    (prompt, cards, provider) => request('/analytics/insight', { method: 'POST', body: JSON.stringify({ prompt, cards, provider }) }),
