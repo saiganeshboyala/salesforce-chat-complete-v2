@@ -87,7 +87,9 @@ def _parse_sf_datetime(val):
     if not val:
         return None
     try:
-        return datetime.fromisoformat(str(val).replace("Z", "+00:00").replace("+00:00", ""))
+        s = str(val).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        return dt.replace(tzinfo=None)
     except Exception:
         return None
 
@@ -315,8 +317,8 @@ async def run_sync():
     results = []
     logger.info("=== Starting Salesforce → PostgreSQL sync ===")
 
-    async with async_session() as session:
-        for obj_name, sync_fn in SYNC_TASKS:
+    for obj_name, sync_fn in SYNC_TASKS:
+        async with async_session() as session:
             log_entry = SyncLog(
                 object_name=obj_name,
                 started_at=datetime.utcnow(),
@@ -330,6 +332,7 @@ async def run_sync():
                 results.append({"object": obj_name, "records": count, "status": "success"})
                 logger.info(f"  ✓ {obj_name}: {count} records")
             except Exception as e:
+                await session.rollback()
                 log_entry.status = "error"
                 log_entry.error = str(e)[:500]
                 log_entry.finished_at = datetime.utcnow()
@@ -337,8 +340,7 @@ async def run_sync():
                 logger.error(f"  ✗ {obj_name}: {e}")
 
             session.add(log_entry)
-
-        await session.commit()
+            await session.commit()
 
     _sync_running = False
     _last_sync = datetime.utcnow()
