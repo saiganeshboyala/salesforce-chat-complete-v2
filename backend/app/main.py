@@ -37,6 +37,8 @@ from app import alerts as alerts_mod
 from app import annotations as annotations_mod
 from app import reports as reports_mod
 from app import analytics as analytics_mod
+from app.database.sync import init_db, run_sync, start_sync_scheduler, get_sync_status
+from app.database import analytics_sql
 from app.connectors import gmail as gmail_conn
 from app.connectors import google_oauth as google_oauth
 from app.salesforce.schema import get_schema, discover_schema, get_relationships
@@ -93,6 +95,23 @@ async def lifespan(app):
     logger.info(f"Ready — {len(get_schema())} objects | Auth + SOQL + RAG + Learning")
     start_scheduler()
     sched.start_runner()
+    # Initialize PostgreSQL and start sync
+    try:
+        await init_db()
+        logger.info("PostgreSQL initialized")
+        # Enable DB for users, sessions, audit
+        from app.auth_users import _init_db_users
+        await _init_db_users()
+        from app.chat import sessions as sessions_mod
+        sessions_mod.enable_db()
+        audit.enable_db()
+        # Start Salesforce data sync
+        logger.info("Running initial Salesforce → PostgreSQL sync...")
+        import asyncio
+        asyncio.create_task(run_sync())
+        start_sync_scheduler()
+    except Exception as e:
+        logger.warning(f"PostgreSQL not available, using JSON files: {e}")
     yield
     sched.stop_runner()
 
@@ -1122,10 +1141,29 @@ async def ai_providers(current_user=Depends(get_current_user)):
 @app.get("/api/analytics/predictive")
 async def analytics_predictive(current_user=Depends(get_current_user)):
     try:
-        return await analytics_mod.compute_analytics()
+        return await analytics_sql.compute_analytics()
     except Exception as e:
-        logger.error(f"Predictive analytics error: {e}")
-        raise HTTPException(500, str(e))
+        logger.warning(f"PostgreSQL analytics failed, falling back to SOQL: {e}")
+        try:
+            return await analytics_mod.compute_analytics()
+        except Exception as e2:
+            logger.error(f"Analytics error: {e2}")
+            raise HTTPException(500, str(e2))
+
+
+# ── Sync Management ──────────────────────────────────
+
+@app.get("/api/sync/status")
+async def sync_status(current_user=Depends(get_current_user)):
+    return get_sync_status()
+
+@app.post("/api/sync/run")
+async def sync_run(current_user=Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(403, "Admin only")
+    import asyncio
+    asyncio.create_task(run_sync())
+    return {"status": "sync_started"}
 
 
 # ── AI Analytics ──────────────────────────────────────

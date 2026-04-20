@@ -1,23 +1,18 @@
 """
-User Authentication — JWT tokens + per-user data storage.
-
-Users are stored in a JSON file (no database needed).
-Each user gets their own chat history and learning memory.
-
-Default admin: admin / admin123 (change on first login)
+User Authentication — JWT tokens + PostgreSQL storage.
+Falls back to JSON file if database is unavailable.
 """
 import json, logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Config ─────────────────────────────────────────────
 _jwt = getattr(settings, 'jwt_secret', '')
 if not _jwt:
     raise RuntimeError("JWT_SECRET is not set in .env — refusing to start with an empty secret")
@@ -31,13 +26,57 @@ USERS_FILE = Path(settings.data_dir) / "users.json"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
+_use_db = False
 
-# ── User Storage ───────────────────────────────────────
+
+async def _init_db_users():
+    """Migrate existing JSON users to PostgreSQL and enable DB mode."""
+    global _use_db
+    try:
+        from app.database.engine import async_session
+        from app.database.models import User
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(select(User).limit(1))
+            existing = result.scalars().first()
+
+            if not existing:
+                if USERS_FILE.exists():
+                    with open(USERS_FILE) as f:
+                        json_users = json.load(f)
+                    for uname, udata in json_users.items():
+                        session.add(User(
+                            username=uname,
+                            password_hash=udata["password"],
+                            name=udata.get("name", uname),
+                            role=udata.get("role", "user"),
+                            created_at=datetime.fromisoformat(udata["created"]) if udata.get("created") else datetime.utcnow(),
+                        ))
+                    await session.commit()
+                    logger.info(f"Migrated {len(json_users)} users from JSON to PostgreSQL")
+                else:
+                    session.add(User(
+                        username="admin",
+                        password_hash=pwd_context.hash("admin123"),
+                        name="Admin",
+                        role="admin",
+                    ))
+                    await session.commit()
+                    logger.info("Created default admin user in PostgreSQL")
+
+        _use_db = True
+        logger.info("User storage: PostgreSQL")
+    except Exception as e:
+        logger.warning(f"PostgreSQL not available for users, using JSON: {e}")
+        _use_db = False
+
+
+# ── JSON fallback ────────────────────────────────────
 def _load_users():
     if USERS_FILE.exists():
         with open(USERS_FILE) as f:
             return json.load(f)
-    # Create default admin user
     default = {
         "admin": {
             "username": "admin",
@@ -57,7 +96,77 @@ def _save_users(users):
         json.dump(users, f, indent=2, default=str)
 
 
-# ── Auth Functions ─────────────────────────────────────
+# ── DB operations ────────────────────────────────────
+async def _db_get_user(username):
+    from app.database.engine import async_session
+    from app.database.models import User
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.username == username))
+        return result.scalars().first()
+
+
+async def _db_authenticate(username, password):
+    user = await _db_get_user(username)
+    if not user or not pwd_context.verify(password, user.password_hash):
+        return None
+    return {"username": user.username, "name": user.name, "role": user.role, "password": user.password_hash}
+
+
+async def _db_create_user(username, password, name, role="user"):
+    from app.database.engine import async_session
+    from app.database.models import User
+    existing = await _db_get_user(username)
+    if existing:
+        return None
+    async with async_session() as session:
+        session.add(User(
+            username=username,
+            password_hash=pwd_context.hash(password),
+            name=name,
+            role=role,
+        ))
+        await session.commit()
+    return {"username": username, "name": name, "role": role}
+
+
+async def _db_list_users():
+    from app.database.engine import async_session
+    from app.database.models import User
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(select(User).order_by(User.created_at))
+        return [
+            {"username": u.username, "name": u.name or "", "role": u.role or "user", "created": u.created_at.isoformat() if u.created_at else ""}
+            for u in result.scalars().all()
+        ]
+
+
+async def _db_delete_user(username):
+    if username == "admin":
+        return False
+    from app.database.engine import async_session
+    from app.database.models import User
+    from sqlalchemy import delete
+    async with async_session() as session:
+        result = await session.execute(delete(User).where(User.username == username))
+        await session.commit()
+        return result.rowcount > 0
+
+
+async def _db_change_password(username, new_password):
+    from app.database.engine import async_session
+    from app.database.models import User
+    from sqlalchemy import update
+    async with async_session() as session:
+        result = await session.execute(
+            update(User).where(User.username == username).values(password_hash=pwd_context.hash(new_password))
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+
+# ── Public API (auto-switches between DB and JSON) ───
 def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
 
@@ -67,6 +176,18 @@ def hash_password(password):
 
 
 def authenticate_user(username, password):
+    if _use_db:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(lambda: asyncio.run(_db_authenticate(username, password))).result()
+            return loop.run_until_complete(_db_authenticate(username, password))
+        except Exception as e:
+            logger.warning(f"DB auth failed, falling back to JSON: {e}")
+
     users = _load_users()
     user = users.get(username)
     if not user or not verify_password(password, user["password"]):
@@ -81,14 +202,12 @@ def create_token(username, role="user"):
 
 def decode_token(token):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """FastAPI dependency — extracts user from JWT token."""
     if not credentials:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -97,26 +216,34 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     username = payload.get("sub")
+
+    if _use_db:
+        user = await _db_get_user(username)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return {"username": user.username, "name": user.name or username, "role": user.role or "user"}
+
     users = _load_users()
     user = users.get(username)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-
-    return {
-        "username": username,
-        "name": user.get("name", username),
-        "role": user.get("role", "user"),
-    }
+    return {"username": username, "name": user.get("name", username), "role": user.get("role", "user")}
 
 
 async def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Same as get_current_user but returns None instead of 401."""
     if not credentials:
         return None
     payload = decode_token(credentials.credentials)
     if not payload:
         return None
     username = payload.get("sub")
+
+    if _use_db:
+        user = await _db_get_user(username)
+        if not user:
+            return None
+        return {"username": user.username, "name": user.name or username, "role": user.role or "user"}
+
     users = _load_users()
     user = users.get(username)
     if not user:
@@ -124,7 +251,7 @@ async def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(
     return {"username": username, "name": user.get("name", username), "role": user.get("role", "user")}
 
 
-# ── User Management ───────────────────────────────────
+# ── User Management ─────────────────────────────────
 def _validate_password(password: str):
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
@@ -136,6 +263,15 @@ def _validate_password(password: str):
 
 def create_user(username, password, name, role="user"):
     _validate_password(password)
+    if _use_db:
+        import asyncio
+        try:
+            return asyncio.run(_db_create_user(username, password, name, role))
+        except RuntimeError:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(_db_create_user(username, password, name, role))).result()
+
     users = _load_users()
     if username in users:
         return None
@@ -151,6 +287,15 @@ def create_user(username, password, name, role="user"):
 
 
 def list_users():
+    if _use_db:
+        import asyncio
+        try:
+            return asyncio.run(_db_list_users())
+        except RuntimeError:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(_db_list_users())).result()
+
     users = _load_users()
     return [
         {"username": u["username"], "name": u.get("name", ""), "role": u.get("role", "user"), "created": u.get("created", "")}
@@ -159,11 +304,18 @@ def list_users():
 
 
 def delete_user(username):
+    if _use_db:
+        import asyncio
+        try:
+            return asyncio.run(_db_delete_user(username))
+        except RuntimeError:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(_db_delete_user(username))).result()
+
     users = _load_users()
-    if username not in users:
+    if username not in users or username == "admin":
         return False
-    if username == "admin":
-        return False  # can't delete admin
     del users[username]
     _save_users(users)
     return True
@@ -171,9 +323,20 @@ def delete_user(username):
 
 def change_password(username, new_password):
     _validate_password(new_password)
+    if _use_db:
+        import asyncio
+        try:
+            return asyncio.run(_db_change_password(username, new_password))
+        except RuntimeError:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(_db_change_password(username, new_password))).result()
+
     users = _load_users()
     if username not in users:
         return False
     users[username]["password"] = hash_password(new_password)
     _save_users(users)
     return True
+
+

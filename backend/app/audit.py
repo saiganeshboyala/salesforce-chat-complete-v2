@@ -1,18 +1,23 @@
-"""Append-only audit log with rotation and filtering."""
-import json
-import logging
+"""Audit log — PostgreSQL with JSON file fallback."""
+import json, logging
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
 _MAX_ENTRIES = 10000
 _lock = Lock()
+_use_db = False
 
 
+def enable_db():
+    global _use_db
+    _use_db = True
+    logger.info("Audit log: PostgreSQL")
+
+
+# ── JSON fallback ────────────────────────────────────
 def _log_path() -> Path:
     d = Path(settings.data_dir)
     d.mkdir(parents=True, exist_ok=True)
@@ -40,7 +45,96 @@ def _save(entries: list[dict]) -> None:
     tmp.replace(p)
 
 
+# ── DB operations ────────────────────────────────────
+def _run_async(coro):
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(lambda: asyncio.run(coro)).result()
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
+async def _db_log(username, action, details, ip_address):
+    from app.database.engine import async_session
+    from app.database.models import AuditLog
+    async with async_session() as session:
+        session.add(AuditLog(
+            username=username or "anonymous",
+            action=action,
+            details=json.dumps(details, default=str) if details else None,
+            ip_address=ip_address or "",
+        ))
+        await session.commit()
+
+
+async def _db_query(user, action, start, end, page, page_size):
+    from app.database.engine import async_session
+    from app.database.models import AuditLog
+    from sqlalchemy import select, func, distinct
+
+    async with async_session() as session:
+        stmt = select(AuditLog).order_by(AuditLog.timestamp.desc())
+
+        if user:
+            stmt = stmt.where(AuditLog.username == user)
+        if action:
+            stmt = stmt.where(AuditLog.action == action)
+        if start:
+            stmt = stmt.where(AuditLog.timestamp >= start)
+        if end:
+            stmt = stmt.where(AuditLog.timestamp <= end)
+
+        count_result = await session.execute(
+            select(func.count()).select_from(stmt.subquery())
+        )
+        total = count_result.scalar() or 0
+
+        page = max(1, page)
+        page_size = max(1, min(page_size, 500))
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+        result = await session.execute(stmt)
+        entries = [
+            {
+                "timestamp": e.timestamp.isoformat() if e.timestamp else "",
+                "username": e.username or "anonymous",
+                "action": e.action or "",
+                "details": json.loads(e.details) if e.details else {},
+                "ip_address": e.ip_address or "",
+            }
+            for e in result.scalars().all()
+        ]
+
+        users_result = await session.execute(select(distinct(AuditLog.username)))
+        users = sorted([u for u in users_result.scalars().all() if u])
+
+        actions_result = await session.execute(select(distinct(AuditLog.action)))
+        actions = sorted([a for a in actions_result.scalars().all() if a])
+
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "entries": entries,
+            "users": users,
+            "actions": actions,
+        }
+
+
+# ── Public API ───────────────────────────────────────
 def log_action(username: str | None, action: str, details: dict | None = None, ip_address: str | None = None) -> None:
+    if _use_db:
+        try:
+            _run_async(_db_log(username, action, details, ip_address))
+            return
+        except Exception as e:
+            logger.warning(f"DB audit log failed: {e}")
+
     entry = {
         "timestamp": datetime.now().isoformat(),
         "username": username or "anonymous",
@@ -67,8 +161,14 @@ def query_log(
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
+    if _use_db:
+        try:
+            return _run_async(_db_query(user, action, start, end, page, page_size))
+        except Exception as e:
+            logger.warning(f"DB audit query failed: {e}")
+
     entries = _load()
-    entries.reverse()  # newest first
+    entries.reverse()
 
     if user:
         entries = [e for e in entries if e.get("username") == user]

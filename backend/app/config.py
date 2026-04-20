@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
 
+    # PostgreSQL
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/fyxo"
+    sync_interval_minutes: int = 15
+
     # Storage
     data_dir: str = str(Path(__file__).parent.parent / "data")
 

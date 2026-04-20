@@ -73,14 +73,30 @@ def validate_soql(query):
     return True
 
 
-async def execute_soql(query, instance_url=None, access_token=None):
-    """Execute a SOQL query and return results."""
+async def execute_soql(query, instance_url=None, access_token=None, force_salesforce=False):
+    """Execute a SOQL query. Tries PostgreSQL first, falls back to Salesforce API."""
     validate_soql(query)
 
     cached = _cache_get(query)
     if cached is not None:
         logger.info(f"SOQL cache hit: {query[:120]}")
         return cached
+
+    # Try PostgreSQL first (if sync is available and not forced to Salesforce)
+    if not force_salesforce:
+        try:
+            from app.database.query import soql_to_sql, execute_sql
+            sql = soql_to_sql(query)
+            if sql:
+                result = await execute_sql(sql)
+                if "error" not in result:
+                    logger.info(f"PostgreSQL hit: {query[:100]}")
+                    _cache_put(query, result)
+                    return result
+                else:
+                    logger.warning(f"PostgreSQL query failed, falling back to Salesforce: {result['error'][:100]}")
+        except Exception as e:
+            logger.warning(f"PostgreSQL unavailable, using Salesforce: {str(e)[:80]}")
 
     url = instance_url or settings.salesforce_instance_url
     from app.salesforce.auth import ensure_authenticated
