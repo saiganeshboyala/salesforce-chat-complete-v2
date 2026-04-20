@@ -421,7 +421,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="sidebar-logo"><img src="/Logo2.svg" alt="Fyxo Chat" style={{ height: 32 }} /></div>
+          <div className="sidebar-logo"><img src="/Logo.svg" alt="Fyxo Chat" style={{ height: 32 }} /></div>
         </div>
 
         <div className="sidebar-top">
@@ -548,7 +548,7 @@ export default function App() {
             <div className="messages">
               {messages.length === 0 && (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24 }}>
-                  <div style={{ width: 56, height: 56, borderRadius: 16, background: 'var(--accent-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{I.sf}</div>
+                  <img src="/logo-emblem.svg" alt="Fyxo" style={{ height: 56 }} />
                   <div style={{ textAlign: 'center' }}>
                     <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 6 }}>{t('chat.welcome', { name: user.name || user.username })}</h2>
                     <p style={{ color: 'var(--text-muted)', fontSize: 13, maxWidth: 420 }}>
