@@ -1187,7 +1187,15 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
             try:
                 count_result = await execute_query(count_q)
                 if "error" not in count_result:
-                    true_total = count_result.get("totalSize", total_size)
+                    recs_count = count_result.get("records", [])
+                    if recs_count and len(recs_count) == 1:
+                        first_val = next(iter(recs_count[0].values()), None)
+                        if isinstance(first_val, int):
+                            true_total = first_val
+                        else:
+                            true_total = count_result.get("totalSize", total_size)
+                    else:
+                        true_total = count_result.get("totalSize", total_size)
                     result["totalSize"] = true_total
                     result["_limited"] = True
                     logger.info(f"True count: {true_total} (LIMIT returned {total_size})")
