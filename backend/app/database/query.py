@@ -1193,7 +1193,7 @@ def soql_to_sql(soql: str) -> str | None:
         "LAST_YEAR": ("DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '1 year'", "DATE_TRUNC('year', CURRENT_DATE)"),
     }
     for soql_lit, (start, end) in range_literals.items():
-        pattern = r'(\w+)\s*=\s*' + re.escape(soql_lit)
+        pattern = r'([\w."]+)\s*=\s*' + re.escape(soql_lit)
         m = re.search(pattern, sql)
         if m:
             col = m.group(1)
@@ -1206,11 +1206,26 @@ def soql_to_sql(soql: str) -> str | None:
         "TOMORROW": "CURRENT_DATE + INTERVAL '1 day'",
     }
     for soql_lit, pg_val in simple_dates.items():
-        pattern = r'(\w+)\s*=\s*' + re.escape(soql_lit)
+        pattern = r'([\w."]+)\s*=\s*' + re.escape(soql_lit)
         m = re.search(pattern, sql)
         if m:
             col = m.group(1)
             sql = sql.replace(m.group(0), f"{col}::date = {pg_val}")
+        pattern_gte = r'([\w."]+)\s*>=\s*' + re.escape(soql_lit)
+        m2 = re.search(pattern_gte, sql)
+        if m2:
+            col = m2.group(1)
+            sql = sql.replace(m2.group(0), f"{col}::date >= {pg_val}")
+        pattern_lte = r'([\w."]+)\s*<=\s*' + re.escape(soql_lit)
+        m3 = re.search(pattern_lte, sql)
+        if m3:
+            col = m3.group(1)
+            sql = sql.replace(m3.group(0), f"{col}::date <= {pg_val}")
+
+    # Catch-all: replace any remaining bare date literals not caught above
+    sql = re.sub(r'\bTODAY\b', 'CURRENT_DATE', sql)
+    sql = re.sub(r'\bYESTERDAY\b', "CURRENT_DATE - INTERVAL '1 day'", sql)
+    sql = re.sub(r'\bTOMORROW\b', "CURRENT_DATE + INTERVAL '1 day'", sql)
 
     # Handle COUNT(Id/sf_id) → COUNT(*)
     sql = re.sub(r'COUNT\("?Id"?\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
@@ -1374,6 +1389,10 @@ def soql_to_sql_with_joins(soql: str) -> str | None:
 
     # Handle >= comparisons with LAST_N_DAYS
     sql = re.sub(r'>= LAST_N_DAYS:(\d+)', lambda m: f">= CURRENT_DATE - INTERVAL '{m.group(1)} days'", sql)
+
+    # Catch-all: replace any remaining bare date literals
+    sql = re.sub(r'\bTODAY\b', 'CURRENT_DATE', sql)
+    sql = re.sub(r'\bYESTERDAY\b', "CURRENT_DATE - INTERVAL '1 day'", sql)
 
     # Clean up
     sql = sql.replace("= null", "IS NULL")
