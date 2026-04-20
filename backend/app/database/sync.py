@@ -641,7 +641,21 @@ async def run_sync(full=False):
     _sync_running = False
     _last_sync = datetime.utcnow()
     total = sum(r["records"] for r in results)
-    logger.info(f"=== Sync complete: {total} total records across {len(results)} objects ===")
+    success_count = sum(1 for r in results if r["status"] == "success")
+    error_count = sum(1 for r in results if r["status"] == "error")
+
+    logger.info("=" * 60)
+    logger.info("  SYNC SUMMARY")
+    logger.info("=" * 60)
+    for r in results:
+        status_icon = "✓" if r["status"] == "success" else "✗"
+        err = f" — {r.get('error', '')[:80]}" if r["status"] == "error" else ""
+        logger.info(f"  {status_icon} {r['object']:<25} {r['records']:>8,} records{err}")
+    logger.info("-" * 60)
+    logger.info(f"  TOTAL: {total:,} records | {success_count} succeeded | {error_count} failed")
+    logger.info(f"  Completed at: {_last_sync.isoformat()}")
+    logger.info("=" * 60)
+
     return {"status": "complete", "total_records": total, "details": results}
 
 
