@@ -1246,3 +1246,175 @@ def soql_to_sql(soql: str) -> str | None:
     return sql
 
 
+# Relationship mappings: object -> { relationship_name -> (target_table, fk_column) }
+RELATIONSHIP_MAP = {
+    "Student__c": {
+        "Manager__r": ("\"Manager__c\"", "\"Manager__c\""),
+    },
+    "Interviews__c": {
+        "Student__r": ("\"Student__c\"", "\"Student__c\""),
+    },
+    "Submissions__c": {
+        "Student__r": ("\"Student__c\"", "\"Student__c\""),
+    },
+    "Job__c": {
+        "Student__r": ("\"Student__c\"", "\"Student__c\""),
+        "Share_With__r": ("\"Manager__c\"", "\"Share_With__c\""),
+    },
+    "Employee__c": {
+        "Onshore_Manager__r": ("\"Manager__c\"", "\"Onshore_Manager__c\""),
+        "Cluster__r": ("\"Cluster__c\"", "\"Cluster__c\""),
+    },
+    "BU_Performance__c": {
+        "BU__r": ("\"Manager__c\"", "\"BU__c\""),
+    },
+}
+
+
+def soql_to_sql_with_joins(soql: str) -> str | None:
+    """
+    Convert SOQL with __r relationship traversals to PostgreSQL with JOINs.
+    Handles patterns like Manager__r.Name, Student__r.Name.
+    """
+    soql = soql.strip()
+    if not soql.upper().startswith("SELECT"):
+        return None
+
+    from_match = re.search(r'\bFROM\s+(\w+)', soql, re.IGNORECASE)
+    if not from_match:
+        return None
+
+    sf_object = from_match.group(1)
+    mapping = SF_TO_PG.get(sf_object)
+    if not mapping:
+        return None
+
+    rel_map = RELATIONSHIP_MAP.get(sf_object, {})
+
+    # Find all __r.Field references
+    rel_refs = re.findall(r'(\w+__r)\.(\w+)', soql)
+    if not rel_refs:
+        return soql_to_sql(soql)
+
+    # Check all relationships are known
+    needed_joins = {}
+    for rel_name, field_name in rel_refs:
+        if rel_name not in rel_map:
+            return None  # Unknown relationship, can't convert
+        needed_joins[rel_name] = rel_map[rel_name]
+
+    table = f'"{mapping["table"]}"'
+    sql = soql
+
+    # Build JOIN clauses and replace __r.Field with alias.Field
+    join_clauses = []
+    for rel_name, (target_table, fk_col) in needed_joins.items():
+        alias = rel_name.replace("__r", "_j")
+        join_clauses.append(f'LEFT JOIN {target_table} "{alias}" ON {table}."{fk_col}" = "{alias}"."Id"')
+        # Replace all rel_name.Field with alias."Field"
+        sql = re.sub(
+            rf'\b{re.escape(rel_name)}\.(\w+)',
+            lambda m: f'"{alias}"."{m.group(1)}"',
+            sql
+        )
+
+    # Replace FROM object with FROM table + JOINs
+    join_sql = " ".join(join_clauses)
+    sql = re.sub(
+        r'\bFROM\s+' + re.escape(sf_object),
+        f'FROM {table} {join_sql}',
+        sql, flags=re.IGNORECASE
+    )
+
+    # Now handle remaining field replacements (non-relationship fields)
+    fields = mapping["fields"]
+    sorted_fields = sorted(fields.items(), key=lambda x: -len(x[0]))
+    for sf_field, pg_col in sorted_fields:
+        # Only replace standalone field references (not already quoted)
+        sql = re.sub(r'(?<!")\b' + re.escape(sf_field) + r'\b(?!")', f'{table}."{pg_col}"', sql)
+
+    # Fix: don't double-quote already quoted fields from JOIN replacements
+    sql = re.sub(r'""', '"', sql)
+
+    # Handle LAST_N_DAYS:X
+    last_n_match = re.findall(r'LAST_N_DAYS:(\d+)', sql)
+    for n in last_n_match:
+        sql = sql.replace(f'LAST_N_DAYS:{n}', f"CURRENT_DATE - INTERVAL '{n} days'")
+
+    # Handle date range literals
+    range_literals = {
+        "THIS_WEEK": ("DATE_TRUNC('week', CURRENT_DATE)", "DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 week'"),
+        "LAST_WEEK": ("DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'", "DATE_TRUNC('week', CURRENT_DATE)"),
+        "THIS_MONTH": ("DATE_TRUNC('month', CURRENT_DATE)", "DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'"),
+        "LAST_MONTH": ("DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'", "DATE_TRUNC('month', CURRENT_DATE)"),
+        "THIS_YEAR": ("DATE_TRUNC('year', CURRENT_DATE)", "DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year'"),
+        "LAST_YEAR": ("DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '1 year'", "DATE_TRUNC('year', CURRENT_DATE)"),
+    }
+    for soql_lit, (start, end) in range_literals.items():
+        pattern = r'([\w."]+)\s*=\s*' + re.escape(soql_lit)
+        m = re.search(pattern, sql)
+        if m:
+            col = m.group(1)
+            sql = sql.replace(m.group(0), f"{col} >= {start} AND {col} < {end}")
+
+    # Handle simple date literals
+    simple_dates = {
+        "TODAY": "CURRENT_DATE",
+        "YESTERDAY": "CURRENT_DATE - INTERVAL '1 day'",
+    }
+    for soql_lit, pg_val in simple_dates.items():
+        pattern = r'([\w."]+)\s*=\s*' + re.escape(soql_lit)
+        m = re.search(pattern, sql)
+        if m:
+            col = m.group(1)
+            sql = sql.replace(m.group(0), f"{col}::date = {pg_val}")
+
+    # Handle >= comparisons with LAST_N_DAYS
+    sql = re.sub(r'>= LAST_N_DAYS:(\d+)', lambda m: f">= CURRENT_DATE - INTERVAL '{m.group(1)} days'", sql)
+
+    # Clean up
+    sql = sql.replace("= null", "IS NULL")
+    sql = re.sub(r"!= null", "IS NOT NULL", sql)
+    sql = re.sub(r'COUNT\(Id\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'COUNT\(\)', 'COUNT(*)', sql, flags=re.IGNORECASE)
+
+    # Handle subqueries
+    sub_matches = list(re.finditer(r'\(SELECT\s+.+?\)', sql))
+    for sm in reversed(sub_matches):
+        sub_sql = sm.group(0)
+        sub_from_m = re.search(r'FROM\s+(\w+)', sub_sql)
+        if sub_from_m:
+            sub_obj = sub_from_m.group(1)
+            sub_mapping = SF_TO_PG.get(sub_obj)
+            if sub_mapping:
+                new_sub = sub_sql
+                new_sub = re.sub(r'\bFROM\s+' + re.escape(sub_obj), f'FROM "{sub_mapping["table"]}"', new_sub)
+                for sf_f, pg_c in sorted(sub_mapping["fields"].items(), key=lambda x: -len(x[0])):
+                    new_sub = re.sub(r'\b' + re.escape(sf_f) + r'\b', f'"{pg_c}"', new_sub)
+                sql = sql[:sm.start()] + new_sub + sql[sm.end():]
+
+    return sql
+
+
+async def execute_query(soql: str) -> dict:
+    """
+    Smart executor: tries local PostgreSQL first (via SOQL→SQL conversion).
+    Falls back to Salesforce API if conversion fails (e.g., unsupported relationships).
+    Returns results in the same format as execute_soql().
+    """
+    # Try conversion with JOIN support first
+    sql = soql_to_sql_with_joins(soql) if '__r' in soql else soql_to_sql(soql)
+
+    if sql:
+        logger.info(f"Using PostgreSQL: {sql[:200]}")
+        result = await execute_sql(sql)
+        if "error" not in result:
+            return result
+        logger.warning(f"PostgreSQL failed, falling back to Salesforce: {result['error'][:150]}")
+
+    # Fallback to Salesforce
+    from app.salesforce.soql_executor import execute_soql
+    logger.info(f"Using Salesforce API: {soql[:150]}")
+    return await execute_soql(soql)
+
+

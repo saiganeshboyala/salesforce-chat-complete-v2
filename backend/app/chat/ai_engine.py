@@ -8,7 +8,7 @@ Users can thumbs-up/down answers to train it.
 import json, logging, re, time
 from app.config import settings
 from app.salesforce.schema import schema_to_prompt, get_schema
-from app.salesforce.soql_executor import execute_soql
+from app.database.query import execute_query
 from app.chat.rag import search as rag_search, is_indexed
 from app.chat.memory import save_interaction, get_learning_examples_prompt
 
@@ -176,6 +176,20 @@ REPORT_PATTERNS = [
         "labels": ["Interviews with Amounts"],
     },
     {
+        "keywords": ["weekly report for", "weekly report of", "send weekly report", "weekly performance report"],
+        "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH"},
+        "default_time": "LAST_WEEK",
+        "name_filter": True,
+        "whatsapp_format": True,
+        "queries": [
+            "SELECT Student_Name__c, BU_Name__c, Offshore_Manager_Name__c, Recruiter_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE BU_Name__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Student_Name__c LIMIT 2000",
+            "SELECT Student__r.Name, Onsite_Manager__c, Offshore_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE Onsite_Manager__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Offshore_Manager__c LIMIT 2000",
+            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c, Marketing_Visa_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Manager__r.Name LIKE '%{name}%' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000",
+            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c, Last_Submission_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Manager__r.Name LIKE '%{name}%' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Manager__r.Name LIMIT 2000",
+        ],
+        "labels": ["Weekly Submissions", "Weekly Interviews", "Weekly Confirmations", "Students Needing Attention"],
+    },
+    {
         "keywords": ["performance of", "performance for", "performance report"],
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH"},
         "default_time": "LAST_WEEK",
@@ -248,7 +262,14 @@ def _match_report_pattern(question):
         name_val = ""
         if pattern.get("name_filter"):
             import re as _re
-            name_match = _re.search(r'(?:performance\s+(?:of|for|report\s+(?:of|for))\s+)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
+            # Try "weekly report for BU [name]" pattern first
+            name_match = _re.search(r'(?:weekly\s+(?:performance\s+)?report\s+(?:for|of)\s+(?:bu\s+)?)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
+            if not name_match:
+                # Try "send weekly report [name]" pattern
+                name_match = _re.search(r'(?:send\s+weekly\s+report\s+(?:for\s+)?(?:bu\s+)?)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
+            if not name_match:
+                # Fall back to "performance of/for [name]" pattern
+                name_match = _re.search(r'(?:performance\s+(?:of|for|report\s+(?:of|for))\s+)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
             if name_match:
                 name_val = name_match.group(1).strip().rstrip('.')
             if not name_val:
@@ -265,7 +286,7 @@ def _match_report_pattern(question):
 
         if resolved:
             logger.info(f"Report pattern matched: {labels[0] if labels else 'unknown'} ({len(resolved)} queries)")
-            return resolved
+            return {"queries": resolved, "whatsapp": pattern.get("whatsapp_format", False), "name": name_val}
 
     return None
 
@@ -514,6 +535,69 @@ When user asks to "draft a message", "send to whatsapp", "write a message for":
   Great work on the submission volume! Let's focus on converting more interviews this week.
   ---"""
 
+WEEKLY_REPORT_PROMPT = """You are a performance report generator for a staffing/consulting company. Generate a WhatsApp-style weekly performance report from the data below.
+
+FORMAT RULES:
+- Use PLAIN TEXT only (no markdown bold/italics — WhatsApp uses *bold* and _italic_).
+- Use *text* for bold (WhatsApp style).
+- Use emojis for visual structure.
+- Keep it concise, data-driven, and action-oriented.
+- Group by Offshore Manager → Recruiter → Student hierarchy when data is available.
+- Include totals per manager and grand total.
+- Highlight top performers and students needing attention.
+- End with a motivational line or action item.
+
+REPORT STRUCTURE:
+1. Header with report title, BU name, and date range
+2. Summary numbers (total submissions, interviews, confirmations)
+3. Per-manager breakdown with student details
+4. Students needing attention (0 submissions, no interviews)
+5. Closing line
+
+EXAMPLE OUTPUT:
+📊 *Weekly Performance Report*
+*BU: Gulam Siddiqui*
+📅 Week: Apr 14 - Apr 20, 2026
+
+━━━━━━━━━━━━━━━━━━━━
+📈 *Summary*
+• Submissions: 45
+• Interviews: 12
+• Confirmations: 2
+━━━━━━━━━━━━━━━━━━━━
+
+👤 *Manager: Ravi Kumar* (18 subs, 5 ints)
+
+┌ Student Name | Subs | Ints
+├ Amit Patel | 5 | 2
+├ Priya Singh | 4 | 1
+├ Rahul Sharma | 3 | 1
+└ Others (4 students) | 6 | 1
+
+👤 *Manager: Lakshmi Reddy* (12 subs, 3 ints)
+
+┌ Student Name | Subs | Ints
+├ Kiran Rao | 4 | 1
+├ Neha Gupta | 3 | 1
+└ Others (3 students) | 5 | 1
+
+━━━━━━━━━━━━━━━━━━━━
+⚠️ *Needs Attention*
+• Suresh Kumar - 0 submissions (5 days)
+• Deepak Verma - 0 interviews (14 days)
+━━━━━━━━━━━━━━━━━━━━
+
+✅ *Total: 45 subs | 12 ints | 2 confirmations*
+🎯 Keep pushing! Target: 60 subs next week.
+
+RULES:
+- Use ONLY data from QUERY RESULTS. Never invent names or numbers.
+- If a field is missing, skip that section.
+- Show ALL students with data, grouped by manager.
+- For students with 0 activity, list them in the "Needs Attention" section.
+- Include Days in Market if available.
+"""
+
 ROUTER_PROMPT = """Decide how to answer this Salesforce question. Return ONLY one word.
 Default to SOQL unless the question is clearly about finding similar/related records.
 SOQL — counts, lists, filters, sums, dates, specific records, status, reports, performance, any data question
@@ -689,7 +773,7 @@ async def _build_data_summary(records, true_total=None, soql_query=None):
             for field in groupable_fields[:4]:
                 try:
                     gq = f"SELECT {field}, COUNT(Id) cnt FROM {obj_name} {where_clause} GROUP BY {field} ORDER BY COUNT(Id) DESC LIMIT 30"
-                    gr = await execute_soql(gq)
+                    gr = await execute_query(gq)
                     if "error" not in gr and gr.get("records"):
                         counts = {}
                         for rec in gr["records"]:
@@ -955,7 +1039,7 @@ async def _execute_multi_query(query_pairs):
 
     for soql, label in query_pairs:
         logger.info(f"Multi-query [{label}]: {soql[:150]}")
-        result = await execute_soql(soql)
+        result = await execute_query(soql)
 
         if "error" in result:
             logger.warning(f"Multi-query [{label}] error: {result['error'][:100]}")
@@ -990,11 +1074,12 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
 
     # Step 0: Try direct pattern match (instant, no AI call needed)
     if not last_soql:
-        pattern_queries = _match_report_pattern(question)
-        if pattern_queries:
+        pattern_match = _match_report_pattern(question)
+        if pattern_match:
+            pattern_queries = pattern_match["queries"]
             if len(pattern_queries) == 1:
                 soql, label = pattern_queries[0]
-                result = await execute_soql(soql)
+                result = await execute_query(soql)
                 if "error" not in result:
                     recs = result.get("records", [])
                     for r in recs:
@@ -1054,7 +1139,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
                 logger.info(f"SOQL fixed (validation): {fix[:200]}")
                 q = fix
 
-    result = await execute_soql(q)
+    result = await execute_query(q)
 
     # Retry 1: Fix based on Salesforce error message
     if "error" in result:
@@ -1067,7 +1152,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
             if fix.upper().startswith("SELECT"):
                 logger.info(f"SOQL retry 1: {fix[:200]}")
                 q = fix
-                result = await execute_soql(q)
+                result = await execute_query(q)
 
     # Retry 2: Completely different approach if still failing
     if "error" in result:
@@ -1079,7 +1164,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
             if fix2.upper().startswith("SELECT"):
                 logger.info(f"SOQL retry 2 (different approach): {fix2[:200]}")
                 q = fix2
-                result = await execute_soql(q)
+                result = await execute_query(q)
 
         if "error" in result:
             return q, result, None
@@ -1100,7 +1185,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
                 # Remove __r traversals from WHERE for COUNT (they work but let's keep it simple)
                 count_q += f" {where_m.group(1)}"
             try:
-                count_result = await execute_soql(count_q)
+                count_result = await execute_query(count_q)
                 if "error" not in count_result:
                     true_total = count_result.get("totalSize", total_size)
                     result["totalSize"] = true_total
@@ -1134,6 +1219,17 @@ async def _route(question):
     return "SOQL"
 
 
+def _is_whatsapp_report(question):
+    """Detect if the user wants a WhatsApp-style formatted report."""
+    q = question.lower()
+    triggers = [
+        "send weekly report", "weekly report for", "weekly report of",
+        "weekly performance report", "send report for", "whatsapp report",
+        "send performance report",
+    ]
+    return any(t in q for t in triggers)
+
+
 # ── Main Answer Functions ────────────────────────────────────────
 
 async def answer_question(question, conversation_history=None, username=None, last_soql=None):
@@ -1156,7 +1252,7 @@ async def answer_question(question, conversation_history=None, username=None, la
                 last_word = name_words[-1]
                 fallback_q = f"SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c FROM Student__c WHERE Name LIKE '%{last_word}%' LIMIT 50"
                 try:
-                    fb_result = await execute_soql(fallback_q)
+                    fb_result = await execute_query(fallback_q)
                     if "error" not in fb_result and fb_result.get("records"):
                         recs = fb_result["records"]
                         for r in recs:
@@ -1185,7 +1281,7 @@ async def answer_question(question, conversation_history=None, username=None, la
                     fields = [f["name"] for f in schema[obj].get("fields", [])
                              if f["type"] not in ("boolean",) and not f["name"].startswith("UserPref")][:25]
                     try:
-                        r = await execute_soql(f"SELECT {','.join(fields)} FROM {obj} ORDER BY LastModifiedDate DESC LIMIT 100")
+                        r = await execute_query(f"SELECT {','.join(fields)} FROM {obj} ORDER BY LastModifiedDate DESC LIMIT 100")
                         if "error" not in r:
                             rag_results = [{"text": json.dumps({k: v for k, v in rec.items() if k != "attributes"}, default=str)[:500], "score": 1.0} for rec in r.get("records", [])[:30]]
                     except Exception:
@@ -1243,7 +1339,15 @@ async def answer_question(question, conversation_history=None, username=None, la
         if data_summary:
             parts.append(data_summary)
 
-    system = RAG_PROMPT if route in ("RAG", "BOTH") else ANSWER_PROMPT
+    # Detect if this is a WhatsApp-style report request
+    use_whatsapp = _is_whatsapp_report(question)
+    if use_whatsapp:
+        system = WEEKLY_REPORT_PROMPT
+    elif route in ("RAG", "BOTH"):
+        system = RAG_PROMPT
+    else:
+        system = ANSWER_PROMPT
+
     prompt = f"Question: {question}\n\nData:\n" + "\n".join(parts)
     if conversation_history:
         ctx = "\n".join(f"{m['role']}: {m['content'][:150]}" for m in conversation_history[-4:])
@@ -1300,9 +1404,9 @@ async def answer_question_stream(question, conversation_history=None, username=N
                 soql_query, soql_result, soql_recs = cached
                 yield {"type": "soql", "data": soql_query}
             else:
-                pattern_queries = _match_report_pattern(question)
-                if pattern_queries:
-                    yield {"type": "thinking", "data": f"Matched report pattern ({len(pattern_queries)} queries)"}
+                pattern_match = _match_report_pattern(question)
+                if pattern_match:
+                    yield {"type": "thinking", "data": f"Matched report pattern ({len(pattern_match['queries'])} queries)"}
 
         if soql_recs is None:
             yield {"type": "thinking", "data": "Picking Salesforce objects"}
@@ -1324,7 +1428,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
                 last_word = name_words[-1]
                 fallback_q = f"SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c FROM Student__c WHERE Name LIKE '%{last_word}%' LIMIT 50"
                 try:
-                    fb_result = await execute_soql(fallback_q)
+                    fb_result = await execute_query(fallback_q)
                     if "error" not in fb_result and fb_result.get("records"):
                         recs = fb_result["records"]
                         for r in recs:
@@ -1355,7 +1459,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
                     fields = [f["name"] for f in schema[obj].get("fields", [])
                              if f["type"] not in ("boolean",) and not f["name"].startswith("UserPref")][:25]
                     try:
-                        r = await execute_soql(f"SELECT {','.join(fields)} FROM {obj} ORDER BY LastModifiedDate DESC LIMIT 100")
+                        r = await execute_query(f"SELECT {','.join(fields)} FROM {obj} ORDER BY LastModifiedDate DESC LIMIT 100")
                         if "error" not in r:
                             rag_results = [{"text": json.dumps({k: v for k, v in rec.items() if k != "attributes"}, default=str)[:500], "score": 1.0} for rec in r.get("records", [])[:30]]
                     except Exception:
@@ -1436,10 +1540,21 @@ async def answer_question_stream(question, conversation_history=None, username=N
         if data_summary:
             parts.append(data_summary)
 
-    yield {"type": "thinking", "data": "Generating formatted answer"}
+    # Detect if this is a WhatsApp-style report request
+    use_whatsapp = _is_whatsapp_report(question)
+    if use_whatsapp:
+        yield {"type": "thinking", "data": "Generating WhatsApp-style report"}
+    else:
+        yield {"type": "thinking", "data": "Generating formatted answer"}
     yield {"type": "thinking_done", "data": None}
 
-    system = RAG_PROMPT if route in ("RAG", "BOTH") else ANSWER_PROMPT
+    if use_whatsapp:
+        system = WEEKLY_REPORT_PROMPT
+    elif route in ("RAG", "BOTH"):
+        system = RAG_PROMPT
+    else:
+        system = ANSWER_PROMPT
+
     prompt = f"Question: {question}\n\nData:\n" + "\n".join(parts)
     if conversation_history:
         ctx = "\n".join(f"{m['role']}: {m['content'][:150]}" for m in conversation_history[-4:])
