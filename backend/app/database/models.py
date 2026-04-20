@@ -123,6 +123,139 @@ class Employee(Base):
     synced_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BUPerformance(Base):
+    __tablename__ = "bu_performance"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255))
+    bu_id = Column(String(18), index=True)
+    in_market_students_count = Column(Float)
+    date = Column(Date)
+    submissions_count = Column(Float)
+    interview_count = Column(Float)
+    submission = Column(Float)
+    target_submissions = Column(Float)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BS(Base):
+    __tablename__ = "bs"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255))
+    student_id = Column(String(18), index=True)
+    bu_name = Column(String(255), index=True)
+    vendor_name = Column(String(255))
+    bill_rate = Column(Float)
+    pay_rate = Column(String(100))
+    calculated_pay_rate = Column(Float)
+    month = Column(String(50))
+    year = Column(String(10))
+    hours = Column(Float)
+    invoice_amount = Column(Float)
+    actual_salary = Column(Float)
+    salary_paid = Column(Float)
+    insurance = Column(Float)
+    h1fee = Column(Float)
+    other_amounts = Column(Float)
+    pending_amount = Column(Float)
+    payroll_taxes = Column(Float)
+    gross_profit = Column(Float)
+    doj = Column(Date)
+    company_name = Column(String(255))
+    payment_type = Column(String(100))
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TechSupport(Base):
+    __tablename__ = "tech_support"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255), index=True)
+    name_field = Column(String(255))
+    amnt_per_call = Column(Float)
+    availability = Column(String(100))
+    calendar_url = Column(String(500))
+    calls_per_day = Column(Float)
+    confirmation_amount = Column(Float)
+    contact_number1 = Column(String(50))
+    contact_number2 = Column(String(50))
+    location = Column(String(255))
+    onsite_mgr_id = Column(String(18))
+    payment_type = Column(String(100))
+    total_amount = Column(Float)
+    account_details = Column(Text)
+    technology = Column(String(255), index=True)
+    priority = Column(String(50))
+    total_interviews_count = Column(Float)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NewStudent(Base):
+    __tablename__ = "new_students"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255), index=True)
+    manager_id = Column(String(18), index=True)
+    date_of_birth = Column(Date)
+    visa_status = Column(String(100))
+    opt_stem_start_date = Column(Date)
+    interested_tech = Column(String(255))
+    phone = Column(String(50))
+    created_date = Column(DateTime)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ManagerCard(Base):
+    __tablename__ = "manager_cards"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255))
+    card = Column(String(255))
+    manager_id = Column(String(18), index=True)
+    source_type = Column(String(100))
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Cluster(Base):
+    __tablename__ = "clusters"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255), index=True)
+    email = Column(String(255))
+    us_number = Column(String(50))
+    india_number = Column(String(50))
+    cluster_alias = Column(String(100))
+    cluster_id = Column(String(50))
+    in_job_student_count = Column(Float)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255), index=True)
+    cluster = Column(String(255))
+    domain = Column(String(255))
+    org_name = Column(String(255))
+    website = Column(String(500))
+    phone_numbers = Column(String(255))
+    country_incorporated = Column(String(100))
+    bank_name = Column(String(255))
+    ein = Column(String(50))
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PayOff(Base):
+    __tablename__ = "pay_offs"
+
+    sf_id = Column(String(18), primary_key=True)
+    name = Column(String(255), index=True)
+    cluster = Column(String(255))
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
 
