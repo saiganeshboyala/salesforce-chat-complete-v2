@@ -154,7 +154,7 @@ class ChangePasswordRequest(BaseModel):
 @app.post("/api/auth/login")
 @limiter.limit("10/minute")
 async def login(req: LoginRequest, request: Request):
-    user = authenticate_user(req.username, req.password)
+    user = await authenticate_user(req.username, req.password)
     ip = request.client.host if request.client else ""
     if not user:
         await audit.log_action(req.username, "login_failed", {"reason": "bad_credentials"}, ip)
@@ -172,7 +172,7 @@ async def register(req: RegisterRequest, current_user=Depends(get_current_user))
         raise HTTPException(403, "Only admins can create users")
     role = req.role if req.role in ("admin", "user") else "user"
     try:
-        user = create_user(req.username, req.password, req.name, role=role)
+        user = await create_user(req.username, req.password, req.name, role=role)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if not user:
@@ -186,11 +186,11 @@ async def me(current_user=Depends(get_current_user)):
 
 @app.post("/api/auth/change-password")
 async def change_pwd(req: ChangePasswordRequest, current_user=Depends(get_current_user)):
-    user = authenticate_user(current_user["username"], req.old_password)
+    user = await authenticate_user(current_user["username"], req.old_password)
     if not user:
         raise HTTPException(400, "Current password is wrong")
     try:
-        change_password(current_user["username"], req.new_password)
+        await change_password(current_user["username"], req.new_password)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"status": "changed"}
@@ -199,13 +199,13 @@ async def change_pwd(req: ChangePasswordRequest, current_user=Depends(get_curren
 async def get_users(current_user=Depends(get_current_user)):
     if current_user["role"] != "admin":
         raise HTTPException(403, "Admin only")
-    return list_users()
+    return await list_users()
 
 @app.delete("/api/auth/users/{username}")
 async def remove_user(username: str, current_user=Depends(get_current_user)):
     if current_user["role"] != "admin":
         raise HTTPException(403, "Admin only")
-    if not delete_user(username):
+    if not await delete_user(username):
         raise HTTPException(400, "Cannot delete this user")
     return {"status": "deleted"}
 
@@ -371,7 +371,7 @@ async def admin_reset_password(req: AdminResetPasswordRequest, current_user=Depe
     if current_user["role"] != "admin":
         raise HTTPException(403, "Admin only")
     try:
-        ok = change_password(req.username, req.new_password)
+        ok = await change_password(req.username, req.new_password)
     except ValueError as e:
         raise HTTPException(400, str(e))
     if not ok:

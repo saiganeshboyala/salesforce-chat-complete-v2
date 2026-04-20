@@ -166,7 +166,7 @@ async def _db_change_password(username, new_password):
         return result.rowcount > 0
 
 
-# ── Public API (auto-switches between DB and JSON) ───
+# ── Public API (all async) ────────────────────────────
 def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
 
@@ -175,16 +175,10 @@ def hash_password(password):
     return pwd_context.hash(password)
 
 
-def authenticate_user(username, password):
+async def authenticate_user(username, password):
     if _use_db:
-        import asyncio
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    return pool.submit(lambda: asyncio.run(_db_authenticate(username, password))).result()
-            return loop.run_until_complete(_db_authenticate(username, password))
+            return await _db_authenticate(username, password)
         except Exception as e:
             logger.warning(f"DB auth failed, falling back to JSON: {e}")
 
@@ -251,7 +245,7 @@ async def get_optional_user(credentials: HTTPAuthorizationCredentials = Depends(
     return {"username": username, "name": user.get("name", username), "role": user.get("role", "user")}
 
 
-# ── User Management ─────────────────────────────────
+# ── User Management (all async) ──────────────────────
 def _validate_password(password: str):
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
@@ -261,16 +255,13 @@ def _validate_password(password: str):
         raise ValueError("Password must contain at least one digit")
 
 
-def create_user(username, password, name, role="user"):
+async def create_user(username, password, name, role="user"):
     _validate_password(password)
     if _use_db:
-        import asyncio
         try:
-            return asyncio.run(_db_create_user(username, password, name, role))
-        except RuntimeError:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(_db_create_user(username, password, name, role))).result()
+            return await _db_create_user(username, password, name, role)
+        except Exception as e:
+            logger.warning(f"DB create user failed: {e}")
 
     users = _load_users()
     if username in users:
@@ -286,15 +277,12 @@ def create_user(username, password, name, role="user"):
     return users[username]
 
 
-def list_users():
+async def list_users():
     if _use_db:
-        import asyncio
         try:
-            return asyncio.run(_db_list_users())
-        except RuntimeError:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(_db_list_users())).result()
+            return await _db_list_users()
+        except Exception as e:
+            logger.warning(f"DB list users failed: {e}")
 
     users = _load_users()
     return [
@@ -303,15 +291,12 @@ def list_users():
     ]
 
 
-def delete_user(username):
+async def delete_user(username):
     if _use_db:
-        import asyncio
         try:
-            return asyncio.run(_db_delete_user(username))
-        except RuntimeError:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(_db_delete_user(username))).result()
+            return await _db_delete_user(username)
+        except Exception as e:
+            logger.warning(f"DB delete user failed: {e}")
 
     users = _load_users()
     if username not in users or username == "admin":
@@ -321,16 +306,13 @@ def delete_user(username):
     return True
 
 
-def change_password(username, new_password):
+async def change_password(username, new_password):
     _validate_password(new_password)
     if _use_db:
-        import asyncio
         try:
-            return asyncio.run(_db_change_password(username, new_password))
-        except RuntimeError:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(lambda: asyncio.run(_db_change_password(username, new_password))).result()
+            return await _db_change_password(username, new_password)
+        except Exception as e:
+            logger.warning(f"DB change password failed: {e}")
 
     users = _load_users()
     if username not in users:
@@ -338,5 +320,3 @@ def change_password(username, new_password):
     users[username]["password"] = hash_password(new_password)
     _save_users(users)
     return True
-
-
