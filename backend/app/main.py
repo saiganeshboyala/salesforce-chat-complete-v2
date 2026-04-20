@@ -1,5 +1,5 @@
 """
-Salesforce Data Chat — API Server with Authentication
+Fyxo Chat — API Server with Authentication
 """
 import csv, io, logging, re, threading
 from datetime import datetime, timedelta
@@ -99,7 +99,7 @@ async def lifespan(app):
 
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI(title="Salesforce Data Chat", lifespan=lifespan)
+app = FastAPI(title="Fyxo Chat", lifespan=lifespan)
 app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
@@ -711,7 +711,7 @@ def _records_to_xlsx_bytes(records: list[dict], headers: list[str]) -> bytes:
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Salesforce Export"
+    ws.title = "Fyxo Export"
 
     header_font = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
     header_fill = PatternFill(start_color="E8734A", end_color="E8734A", fill_type="solid")
@@ -776,7 +776,7 @@ async def export_pdf(req: PdfExportRequest, request: Request, user=Depends(get_o
             records=req.records or [],
             username=username,
         )
-        safe_name = (req.title or "salesforce_report").lower()
+        safe_name = (req.title or "fyxo_report").lower()
         safe_name = "".join(c if c.isalnum() else "_" for c in safe_name)[:60] or "report"
         return StreamingResponse(
             iter([pdf_bytes]),
@@ -810,7 +810,7 @@ async def export_data(q: str = Query(...), format: str = Query("csv"), current_u
             return StreamingResponse(
                 iter([data]),
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": "attachment; filename=salesforce_export.xlsx"},
+                headers={"Content-Disposition": "attachment; filename=fyxo_export.xlsx"},
             )
 
         output = io.StringIO()
@@ -822,7 +822,7 @@ async def export_data(q: str = Query(...), format: str = Query("csv"), current_u
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=salesforce_export.csv"},
+            headers={"Content-Disposition": "attachment; filename=fyxo_export.csv"},
         )
     except HTTPException:
         raise

@@ -62,7 +62,7 @@ export default function MessageActions({ message }) {
     setExportingPdf(true)
     try {
       const blob = await api.exportPdf({
-        title: (message.question || 'Salesforce Report').slice(0, 80),
+        title: (message.question || 'Fyxo Report').slice(0, 80),
         question: message.question || '',
         answer: message.content || '',
         soql: message.soql || message.data?.query || null,
@@ -71,7 +71,7 @@ export default function MessageActions({ message }) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `salesforce_report_${Date.now()}.pdf`
+      a.download = `fyxo_report_${Date.now()}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()

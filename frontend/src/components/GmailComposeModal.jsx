@@ -22,7 +22,7 @@ export default function GmailComposeModal({ message, onClose }) {
   const toast = useToast()
   const [to, setTo] = useState('')
   const [cc, setCc] = useState('')
-  const [subject, setSubject] = useState('Salesforce Report')
+  const [subject, setSubject] = useState('Fyxo Report')
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
   const [status, setStatus] = useState(null) // {connected, account, configured}

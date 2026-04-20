@@ -1,4 +1,4 @@
-export function downloadCSV(records, filename = 'salesforce_export.csv') {
+export function downloadCSV(records, filename = 'fyxo_export.csv') {
   if (!records?.length) return
   const keys = Object.keys(records[0]).filter(k => k !== 'attributes')
   const escape = (v) => {

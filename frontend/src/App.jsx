@@ -194,7 +194,7 @@ function LoginPage({ onLogin }) {
             width: 48, height: 48, borderRadius: 14, background: 'var(--accent)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             fontWeight: 700, fontSize: 18, color: 'white', marginBottom: 12,
-          }}>SF</div>
+          }}>FC</div>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('login.title')}</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>{t('login.subtitle')}</p>
         </div>
@@ -423,8 +423,8 @@ export default function App() {
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="sidebar-logo">SF</div>
-          <span className="sidebar-title">Data Chat</span>
+          <div className="sidebar-logo">FC</div>
+          <span className="sidebar-title">Fyxo Chat</span>
         </div>
 
         <div className="sidebar-top">
@@ -542,7 +542,7 @@ export default function App() {
         ) : (
           <>
             <div className="chat-header">
-              <span className="chat-header-title">Salesforce Data Chat</span>
+              <span className="chat-header-title">Fyxo Chat</span>
               <span className="chat-header-badge">
                 {welcome?.data?.total_objects || '—'} objects · {(welcome?.data?.total_records || 0).toLocaleString()} records
               </span>
