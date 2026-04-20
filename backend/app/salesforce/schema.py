@@ -215,7 +215,7 @@ def schema_to_prompt(schema=None, max_objects=30):
     if not s:
         return "No schema available. Run schema discovery first."
 
-    lines = ["SALESFORCE SCHEMA (use these exact field names in SOQL):\n"]
+    lines = ["DATABASE SCHEMA (PostgreSQL - use these exact quoted table/column names):\n"]
 
     sorted_objs = sorted(s.items(), key=lambda x: -(x[1].get("record_count") or 0))
     object_names = set(s.keys())
@@ -323,17 +323,17 @@ def schema_to_prompt(schema=None, max_objects=30):
     lines.append("  'Sub' = Submission (Submissions__c). 'Int' = Interview (Interviews__c)")
 
     lines.append("\n" + "=" * 60)
-    lines.append("CRITICAL SOQL RULES:")
-    lines.append("  1. SOQL has NO date arithmetic. NEVER use DATEDIFF, DAYS_BETWEEN, or date math.")
-    lines.append("  2. For 'days in market' use Days_in_Market_Business__c (number on Student__c)")
-    lines.append("  3. For student status use Student_Marketing_Status__c (NOT Final_Marketing_Status__c)")
-    lines.append("  4. Date filters: LAST_WEEK, LAST_N_DAYS:14, THIS_MONTH, LAST_MONTH, TODAY, THIS_YEAR")
-    lines.append("  5. textarea fields CANNOT be in GROUP BY or WHERE =. Use LIKE for text search.")
-    lines.append("  6. Formula/text fields (groupable=False) CANNOT be in GROUP BY. Fetch raw records instead.")
-    lines.append("  7. Use __r syntax for parent lookups (Manager__r.Name, Student__r.Name, etc.)")
-    lines.append("  8. For names, use LIKE '%Name%' not exact = match.")
-    lines.append("  9. Always include Name in SELECT for readability.")
-    lines.append("  10. LIMIT 200 max. Use ORDER BY for grouping.")
+    lines.append("CRITICAL PostgreSQL RULES:")
+    lines.append("  1. ALWAYS double-quote table and column names: \"Student__c\", \"Name\", \"Technology__c\"")
+    lines.append("  2. Use PostgreSQL date functions: CURRENT_DATE, DATE_TRUNC('month', CURRENT_DATE), INTERVAL")
+    lines.append("  3. NEVER use SOQL date literals (TODAY, THIS_MONTH, LAST_N_DAYS). Use PostgreSQL equivalents.")
+    lines.append("  4. For 'days in market' use \"Days_in_Market_Business__c\" (number on Student__c)")
+    lines.append("  5. For student status use \"Student_Marketing_Status__c\" (NOT Final_Marketing_Status__c)")
+    lines.append("  6. For names, use ILIKE '%Name%' (case-insensitive) not exact = match.")
+    lines.append("  7. Always include \"Name\" in SELECT for readability.")
+    lines.append("  8. Use LEFT JOIN for cross-table queries (not __r syntax).")
+    lines.append("  9. LIMIT 2000 max. Use ORDER BY for sorting.")
+    lines.append("  10. For GROUP BY, use COUNT(*) AS cnt, not COUNT(Id).")
 
     lines.append("\n" + "=" * 60)
     lines.append("BUSINESS REPORT PATTERNS (exact queries for common reports):")

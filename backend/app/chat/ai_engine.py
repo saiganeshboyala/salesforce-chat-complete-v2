@@ -328,57 +328,75 @@ KEY RULES:
 - For cross-object questions, pick the PRIMARY object and use __r lookups for related data."""
 
 # ── Step 2: Generate SOQL with focused schema ────────────────────
-SOQL_PROMPT = """You are a SOQL expert for a staffing/consulting company's Salesforce CRM.
-Return ONLY the SOQL query. No explanation, no markdown, no backticks.
+SOQL_PROMPT = """You are a PostgreSQL SQL expert for a staffing/consulting company database.
+Return ONLY the SQL query. No explanation, no markdown, no backticks.
+
+CRITICAL: All table and column names MUST be double-quoted (case-sensitive PostgreSQL).
+Example: SELECT "Name", "Technology__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market'
 
 RULES:
+- ALWAYS double-quote table names: "Student__c", "Submissions__c", "Interviews__c", "Job__c", "Employee__c"
+- ALWAYS double-quote column names: "Name", "BU_Name__c", "Technology__c", etc.
 - Use EXACT field names from the schema. NEVER guess or invent field names.
-- Check BUSINESS REPORT PATTERNS in the schema for pre-built queries. Use them when they match.
-- Check FIELD-TO-QUESTION MAPPING and COMMON QUERY PATTERNS in the schema.
+- Check BUSINESS REPORT PATTERNS in the schema for pre-built queries.
 - Check ACTUAL PICKLIST VALUES for correct spelling in WHERE clauses.
-- For person names, use LIKE '%LastName%' (search by LAST NAME for best results).
-  Example: "Sai Ganesh Chinnamsetty" → WHERE Name LIKE '%Chinnamsetty%'
+- For person names, use ILIKE '%LastName%' (case-insensitive search by LAST NAME).
+  Example: "Sai Ganesh Chinnamsetty" -> WHERE "Name" ILIKE '%Chinnamsetty%'
   If full name doesn't match, try last name only. Never use exact match (=) for names.
-- Always include Name in SELECT + as many useful fields as possible for "details" queries.
-- For "details of [person]" or "personal details": SELECT ALL important fields (Name, status, technology, manager, dates, phone, email, visa, etc.) — not just 3-5 fields.
-- For follow-ups like "by lead" or "this month": look at PREVIOUS SOQL and modify the GROUP/ORDER/WHERE.
-- Max LIMIT 2000. Only SELECT. If impossible, return: NO_SOQL
-- SOQL has NO date arithmetic. Date filters: TODAY, THIS_MONTH, LAST_N_DAYS:30, etc.
-- textarea fields CANNOT be in GROUP BY or WHERE =.
+- Always include "Name" in SELECT + as many useful fields as possible.
+- For "details of [person]": SELECT ALL important fields (Name, status, technology, phone, email, visa, days in market, etc.)
+- For follow-ups like "by lead" or "this month": look at PREVIOUS SQL and modify.
+- Max LIMIT 2000. Only SELECT. If impossible, return: NO_SQL
+- Use PostgreSQL date functions (see below). NEVER use SOQL date literals like TODAY, THIS_MONTH, LAST_N_DAYS.
 
-CROSS-OBJECT QUERIES (use __r for parent lookups):
-- Student -> BU: Manager__r.Name (Student__c.Manager__c references Manager__c)
-- Submission -> Student: Student__r.Name (Submissions__c.Student__c references Student__c)
-- Interview -> Student: Student__r.Name. Interview -> Submission: Submissions__r.Name
-- Job -> Student: Student__r.Name. Job -> BU: Share_With__r.Name
-- Employee -> BU: Onshore_Manager__r.Name. Employee -> Cluster: Cluster__r.Name
-- BU Performance -> BU: BU__r.Name
-- Use subqueries for complex filters: WHERE Id IN (SELECT Student__c FROM Interviews__c WHERE ...)
+DATE FUNCTIONS (PostgreSQL - ALWAYS use these):
+- Today: CURRENT_DATE
+- Yesterday: CURRENT_DATE - INTERVAL '1 day'
+- This week: "col" >= DATE_TRUNC('week', CURRENT_DATE)
+- Last week: "col" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND "col" < DATE_TRUNC('week', CURRENT_DATE)
+- This month: "col" >= DATE_TRUNC('month', CURRENT_DATE) AND "col" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+- Last month: "col" >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month' AND "col" < DATE_TRUNC('month', CURRENT_DATE)
+- Last N days: "col" >= CURRENT_DATE - INTERVAL 'N days'
+- This quarter: "col" >= DATE_TRUNC('quarter', CURRENT_DATE)
+- This year: "col" >= DATE_TRUNC('year', CURRENT_DATE)
+
+CROSS-OBJECT QUERIES (use LEFT JOIN):
+- Student -> BU Manager: LEFT JOIN "Manager__c" ON "Student__c"."Manager__c" = "Manager__c"."Id"
+- Submission -> Student: LEFT JOIN "Student__c" ON "Submissions__c"."Student__c" = "Student__c"."Id"
+- Interview -> Student: LEFT JOIN "Student__c" ON "Interviews__c"."Student__c" = "Student__c"."Id"
+- For BU queries on Submissions/Interviews: just use "BU_Name__c" or "Onsite_Manager__c" directly (no JOIN needed)
+- Subqueries: WHERE "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE ...)
 
 WHEN USER ASKS "how many" or "count":
-- Return actual records with Name + key fields (not just COUNT).
-- The system auto-shows the total count. Only use COUNT()/GROUP BY for breakdowns.
+- Return actual records with "Name" + key fields (not just COUNT).
+- The system auto-shows the total count. Only use COUNT(*)/GROUP BY for breakdowns.
 
 WHEN USER ASKS ABOUT A BU (business unit):
 - BU = a manager name like 'Divya Panguluri'.
-- BEST: SELECT Name, Manager__r.Name, Technology__c FROM Student__c WHERE Manager__r.Name LIKE '%Divya%'
-- For submission details: SELECT Student_Name__c, BU_Name__c FROM Submissions__c WHERE BU_Name__c LIKE '%Divya%'
+- For submissions: SELECT "Student_Name__c", "BU_Name__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%Divya%'
+- For students with JOIN: SELECT s."Name", m."Name" AS "BU_Manager" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE m."Name" ILIKE '%Divya%'
 
-EXAMPLES (learn from these):
+EXAMPLES:
 Q: "how many students in market under Divya?"
-A: SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c, Student_Marketing_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Manager__r.Name LIKE '%Divya%' ORDER BY Days_in_Market_Business__c DESC LIMIT 2000
+A: SELECT s."Name", m."Name" AS "BU_Manager", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND m."Name" ILIKE '%Divya%' ORDER BY s."Days_in_Market_Business__c" DESC LIMIT 2000
 
 Q: "last week submissions by BU"
-A: SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY BU_Name__c LIMIT 2000
+A: SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c", "Offshore_Manager_Name__c" FROM "Submissions__c" WHERE "CreatedDate" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND "CreatedDate" < DATE_TRUNC('week', CURRENT_DATE) ORDER BY "BU_Name__c" LIMIT 2000
 
-Q: "students with no interviews in 2 weeks"
-A: SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Manager__r.Name LIMIT 2000
+Q: "this month submissions BU wise"
+A: SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' ORDER BY "BU_Name__c" LIMIT 2000
+
+Q: "today interviews"
+A: SELECT "Name", "Type__c", "Final_Status__c", "Interview_Date__c", "Onsite_Manager__c" FROM "Interviews__c" WHERE "Interview_Date__c" = CURRENT_DATE LIMIT 2000
 
 Q: "top BUs by submission count this month"
-A: SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = THIS_MONTH ORDER BY BU_Name__c LIMIT 2000
+A: SELECT "BU_Name__c", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY "BU_Name__c" ORDER BY cnt DESC LIMIT 30
+
+Q: "students with no interviews in 2 weeks"
+A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "CreatedDate" >= CURRENT_DATE - INTERVAL '14 days') LIMIT 2000
 
 Q: "details of Sai Ganesh Chinnamsetty"
-A: SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c, Last_Submission_Date__c, PreMarketingStatus__c, Verbal_Confirmation_Date__c, Project_Start_Date__c FROM Student__c WHERE Name LIKE '%Chinnamsetty%' LIMIT 2000"""
+A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c", "Phone__c", "Email__c", "Marketing_Visa_Status__c", "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c", "Project_Start_Date__c" FROM "Student__c" WHERE "Name" ILIKE '%Chinnamsetty%' LIMIT 2000"""
 
 ANSWER_PROMPT = """You are an elite data analyst for a staffing/consulting company. You produce executive-quality reports from Salesforce data.
 
@@ -755,7 +773,7 @@ async def _build_data_summary(records, true_total=None, soql_query=None):
     # If result was limited, run GROUP BY queries for accurate breakdowns
     group_by_results = {}
     if is_limited and soql_query:
-        from_m = re.search(r'FROM\s+(\w+)', soql_query, re.IGNORECASE)
+        from_m = re.search(r'FROM\s+("[\w]+"|\w+)', soql_query, re.IGNORECASE)
         where_m = re.search(r'(WHERE\s+.+?)(?:\s+ORDER|\s+GROUP|\s+LIMIT|\s*$)', soql_query, re.IGNORECASE | re.DOTALL)
         if from_m:
             obj_name = from_m.group(1)
@@ -772,10 +790,13 @@ async def _build_data_summary(records, true_total=None, soql_query=None):
 
             for field in groupable_fields[:4]:
                 try:
-                    gq = f"SELECT {field}, COUNT(Id) cnt FROM {obj_name} {where_clause} GROUP BY {field} ORDER BY COUNT(Id) DESC LIMIT 30"
-                    logger.info(f"GROUP BY query: {gq}")
+                    quoted_field = f'"{field}"'
+                    # obj_name might already be quoted from the AI SQL
+                    table_ref = obj_name if obj_name.startswith('"') else f'"{obj_name}"'
+                    gq = f"SELECT {quoted_field}, COUNT(*) AS cnt FROM {table_ref} {where_clause} GROUP BY {quoted_field} ORDER BY cnt DESC LIMIT 30"
+                    logger.info(f"GROUP BY query: {gq[:200]}")
                     gr = await execute_query(gq)
-                    logger.info(f"GROUP BY {field} result: {len(gr.get('records', []))} rows, keys={list(gr.get('records', [{}])[0].keys()) if gr.get('records') else 'none'}")
+                    logger.info(f"GROUP BY {field} result: {len(gr.get('records', []))} rows")
                     if "error" not in gr and gr.get("records"):
                         counts = {}
                         for rec in gr["records"]:
@@ -1111,61 +1132,61 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         prompt = f"Conversation:\n{ctx}\n\n{prompt}"
     if last_soql:
         prompt = (
-            "If the user is refining a previous query, modify the PREVIOUS SOQL below "
-            "instead of writing a new one. Only modify it — don't rewrite from scratch "
+            "If the user is refining a previous query, modify the PREVIOUS SQL below "
+            "instead of writing a new one. Only modify it - don't rewrite from scratch "
             "unless the topic changed completely.\n"
-            f"PREVIOUS SOQL: {last_soql}\n\n"
+            f"PREVIOUS SQL: {last_soql}\n\n"
             + prompt
         )
 
-    # Generate SOQL with temperature=0 for deterministic output
+    # Generate SQL with temperature=0 for deterministic output
     q = await _call_ai(SOQL_PROMPT, prompt, 500, temperature=0)
     if not q:
         return None, None, None
     q = q.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
-    if q == "NO_SOQL" or not q.upper().startswith("SELECT"):
+    if q in ("NO_SOQL", "NO_SQL") or not q.upper().startswith("SELECT"):
         return None, None, None
 
-    logger.info(f"SOQL: {q[:200]}")
+    logger.info(f"SQL: {q[:200]}")
 
-    # Pre-validate fields before hitting Salesforce
+    # Pre-validate fields
     validation_error = _validate_soql_fields(q)
     if validation_error:
-        logger.warning(f"SOQL validation: {validation_error}")
+        logger.warning(f"SQL validation: {validation_error}")
         obj_hint = _extract_object_fields_hint(q, schema_text)
         fix = await _call_ai(SOQL_PROMPT,
-            f"Validation error: {validation_error}\nQuery: {q}\n{obj_hint}\n{learning}\nRewrite using ONLY valid fields listed above.",
+            f"Validation error: {validation_error}\nQuery: {q}\n{obj_hint}\n{learning}\nRewrite using ONLY valid fields listed above. Remember to double-quote all table and column names.",
             500, temperature=0)
         if fix:
             fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
             if fix.upper().startswith("SELECT"):
-                logger.info(f"SOQL fixed (validation): {fix[:200]}")
+                logger.info(f"SQL fixed (validation): {fix[:200]}")
                 q = fix
 
     result = await execute_query(q)
 
-    # Retry 1: Fix based on Salesforce error message
+    # Retry 1: Fix based on PostgreSQL error message
     if "error" in result:
         obj_hint = _extract_object_fields_hint(q, schema_text)
         fix = await _call_ai(SOQL_PROMPT,
-            f"SOQL FAILED with error:\n{result['error'][:400]}\n\nFailed query:\n{q}\n\n{obj_hint}\n\n{learning}\n\nWrite a CORRECTED query. Use ONLY fields from AVAILABLE FIELDS above. If a field doesn't exist on this object, try a different object or approach.",
+            f"SQL FAILED with PostgreSQL error:\n{result['error'][:400]}\n\nFailed query:\n{q}\n\n{obj_hint}\n\n{learning}\n\nWrite a CORRECTED PostgreSQL query. Double-quote all table/column names. Use ONLY fields from AVAILABLE FIELDS above.",
             500, temperature=0)
         if fix:
             fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
             if fix.upper().startswith("SELECT"):
-                logger.info(f"SOQL retry 1: {fix[:200]}")
+                logger.info(f"SQL retry 1: {fix[:200]}")
                 q = fix
                 result = await execute_query(q)
 
     # Retry 2: Completely different approach if still failing
     if "error" in result:
         fix2 = await _call_ai(SOQL_PROMPT,
-            f"Two queries failed. Try a COMPLETELY DIFFERENT approach.\nQuestion: {question}\nLast error: {result['error'][:300]}\n\nSchema:\n{schema_text[:8000]}\n{learning}\n\nUse a simpler query on a different object if needed. Fetch raw records and let the answer AI handle grouping.",
+            f"Two queries failed. Try a COMPLETELY DIFFERENT approach.\nQuestion: {question}\nLast error: {result['error'][:300]}\n\nSchema:\n{schema_text[:8000]}\n{learning}\n\nWrite a simpler PostgreSQL query. Double-quote all identifiers. Try a different table if needed.",
             500, temperature=0)
         if fix2:
             fix2 = fix2.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
             if fix2.upper().startswith("SELECT"):
-                logger.info(f"SOQL retry 2 (different approach): {fix2[:200]}")
+                logger.info(f"SQL retry 2 (different approach): {fix2[:200]}")
                 q = fix2
                 result = await execute_query(q)
 
@@ -1176,19 +1197,20 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
     for r in recs:
         r.pop("attributes", None)
 
-    # If LIMIT was hit, get true total count via COUNT() query
+    # If LIMIT was hit, get true total count via COUNT(*) query
     total_size = result.get("totalSize", len(recs))
     limit_m = re.search(r'LIMIT\s+(\d+)', q, re.IGNORECASE)
     if limit_m and total_size >= int(limit_m.group(1)):
-        from_m = re.search(r'FROM\s+(\w+)', q, re.IGNORECASE)
+        from_m = re.search(r'FROM\s+("[\w]+"|\w+)', q, re.IGNORECASE)
         where_m = re.search(r'(WHERE\s+.+?)(?:\s+ORDER|\s+GROUP|\s+LIMIT|\s*$)', q, re.IGNORECASE | re.DOTALL)
         if from_m:
-            count_q = f"SELECT COUNT() FROM {from_m.group(1)}"
+            table_name = from_m.group(1)
+            count_q = f"SELECT COUNT(*) FROM {table_name}"
             if where_m:
                 count_q += f" {where_m.group(1)}"
             try:
                 count_result = await execute_query(count_q)
-                logger.info(f"Count query: {count_q} -> result keys: {list(count_result.keys()) if count_result else 'None'}")
+                logger.info(f"Count query: {count_q[:150]}")
                 if "error" not in count_result:
                     recs_count = count_result.get("records", [])
                     if recs_count and len(recs_count) == 1:
@@ -1204,7 +1226,6 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
                     logger.info(f"True count: {true_total} (LIMIT returned {total_size})")
             except Exception as e:
                 logger.warning(f"Count query failed: {e}")
-                pass
 
     if recs and not last_soql:
         _cache_set(question, q, result, recs)

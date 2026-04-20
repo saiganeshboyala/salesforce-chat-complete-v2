@@ -1418,18 +1418,27 @@ def soql_to_sql_with_joins(soql: str) -> str | None:
     return sql
 
 
-async def execute_query(soql: str) -> dict:
+async def execute_query(query: str) -> dict:
     """
-    Execute query on local PostgreSQL only (no Salesforce fallback).
-    Converts SOQL to SQL and runs against the synced database.
+    Execute query on local PostgreSQL.
+    Accepts either direct SQL (from AI) or legacy SOQL (auto-converted).
     """
-    sql = soql_to_sql_with_joins(soql) if '__r' in soql else soql_to_sql(soql)
+    # If query already looks like proper PostgreSQL SQL (has double-quoted identifiers), run directly
+    if '"' in query and query.strip().upper().startswith("SELECT"):
+        logger.info(f"PostgreSQL (direct): {query[:200]}")
+        result = await execute_sql(query)
+        if "error" in result:
+            logger.warning(f"PostgreSQL query failed: {result['error'][:200]}")
+        return result
+
+    # Legacy: try SOQL-to-SQL conversion for backward compatibility
+    sql = soql_to_sql_with_joins(query) if '__r' in query else soql_to_sql(query)
 
     if not sql:
-        logger.warning(f"Could not convert SOQL to SQL: {soql[:200]}")
-        return {"error": f"Could not convert query to PostgreSQL SQL. SOQL: {soql[:200]}", "records": [], "totalSize": 0}
+        logger.warning(f"Could not convert to SQL: {query[:200]}")
+        return {"error": f"Could not convert query to PostgreSQL SQL: {query[:200]}", "records": [], "totalSize": 0}
 
-    logger.info(f"PostgreSQL: {sql[:200]}")
+    logger.info(f"PostgreSQL (converted): {sql[:200]}")
     result = await execute_sql(sql)
     if "error" in result:
         logger.warning(f"PostgreSQL query failed: {result['error'][:200]}")
