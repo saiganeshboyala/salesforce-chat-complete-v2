@@ -421,7 +421,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="sidebar-logo"><img src="/logo.svg" alt="Fyxo Chat" style={{ height: 32 }} /></div>
+          <div className="sidebar-logo"><img src="/Logo2.svg" alt="Fyxo Chat" style={{ height: 32 }} /></div>
         </div>
 
         <div className="sidebar-top">
