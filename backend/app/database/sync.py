@@ -11,7 +11,6 @@ from app.database.engine import engine, async_session
 from app.database.models import (
     Base, Student, Submission, Interview, Manager, Job, Employee, SyncLog
 )
-from app.salesforce.soql_executor import execute_soql
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -35,11 +34,39 @@ async def init_db():
 
 
 async def _fetch_all(soql):
-    """Fetch all records from Salesforce, handling pagination."""
-    result = await execute_soql(soql)
-    if "error" in result:
-        raise Exception(f"SOQL error: {result['error']}")
-    records = result.get("records", [])
+    """Fetch ALL records from Salesforce with full pagination (no limit)."""
+    import httpx
+    from app.salesforce.auth import ensure_authenticated
+
+    creds = await ensure_authenticated()
+    api_url = f"{creds.instance_url}/services/data/{settings.salesforce_api_version}/query/"
+    headers = {"Authorization": f"Bearer {creds.access_token}"}
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.get(api_url, params={"q": soql}, headers=headers)
+
+        if resp.status_code == 401:
+            from app.salesforce.auth import login_client_credentials
+            creds = await login_client_credentials()
+            headers = {"Authorization": f"Bearer {creds.access_token}"}
+            resp = await client.get(api_url, params={"q": soql}, headers=headers)
+
+        if resp.status_code != 200:
+            raise Exception(f"SOQL error {resp.status_code}: {resp.text[:300]}")
+
+        data = resp.json()
+        records = data.get("records", [])
+        next_url = data.get("nextRecordsUrl")
+
+        while next_url:
+            resp = await client.get(f"{creds.instance_url}{next_url}", headers=headers)
+            if resp.status_code != 200:
+                break
+            page = resp.json()
+            records.extend(page.get("records", []))
+            next_url = page.get("nextRecordsUrl")
+            logger.info(f"  ... fetched {len(records)} records so far")
+
     for r in records:
         r.pop("attributes", None)
     return records
@@ -79,7 +106,7 @@ async def _sync_students(session):
         "Otter_Real_Time_Screeing_1__c, Otter_Real_Time_Screeing_2__c, "
         "Has_Linkedin_Created__c, Student_LinkedIn_Account_Review__c, "
         "MQ_Screening_By_Lead__c, MQ_Screening_By_Manager__c "
-        "FROM Student__c ORDER BY Name LIMIT 50000"
+        "FROM Student__c ORDER BY Name "
     )
 
     await session.execute(delete(Student))
@@ -125,7 +152,7 @@ async def _sync_submissions(session):
     records = await _fetch_all(
         "SELECT Id, Student_Name__c, BU_Name__c, Client_Name__c, "
         "Submission_Date__c, Offshore_Manager_Name__c, Recruiter_Name__c, CreatedDate "
-        "FROM Submissions__c ORDER BY Submission_Date__c DESC LIMIT 50000"
+        "FROM Submissions__c ORDER BY Submission_Date__c DESC "
     )
 
     await session.execute(delete(Submission))
@@ -152,7 +179,7 @@ async def _sync_interviews(session):
         "SELECT Id, Student__c, Student__r.Name, Onsite_Manager__c, "
         "Type__c, Final_Status__c, Amount__c, Amount_INR__c, Bill_Rate__c, "
         "Interview_Date__c, CreatedDate "
-        "FROM Interviews__c ORDER BY Interview_Date__c DESC LIMIT 50000"
+        "FROM Interviews__c ORDER BY Interview_Date__c DESC "
     )
 
     await session.execute(delete(Interview))
@@ -185,7 +212,7 @@ async def _sync_managers(session):
         "In_Market_Students_Count__c, Verbal_Count__c, "
         "BU_Student_With_Job_Count__c, IN_JOB_Students_Count__c, "
         "Cluster__c, Organization__c "
-        "FROM Manager__c LIMIT 50000"
+        "FROM Manager__c "
     )
 
     await session.execute(delete(Manager))
@@ -216,7 +243,7 @@ async def _sync_jobs(session):
         "SELECT Id, Student__c, Student__r.Name, Share_With__c, Share_With__r.Name, "
         "PayRate__c, Caluculated_Pay_Rate__c, Pay_Roll_Tax__c, Profit__c, "
         "Bill_Rate__c, Active__c, Project_Type__c, Technology__c, Payroll_Month__c "
-        "FROM Job__c LIMIT 50000"
+        "FROM Job__c "
     )
 
     await session.execute(delete(Job))
@@ -249,7 +276,7 @@ async def _sync_employees(session):
     logger.info("Syncing Employee__c...")
     records = await _fetch_all(
         "SELECT Id, Name, Onshore_Manager__c, Onshore_Manager__r.Name, Cluster__c "
-        "FROM Employee__c LIMIT 50000"
+        "FROM Employee__c "
     )
 
     await session.execute(delete(Employee))
