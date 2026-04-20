@@ -192,7 +192,7 @@ function LoginPage({ onLogin }) {
         borderRadius: 'var(--radius-xl)', padding: '36px 32px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ marginBottom: 12 }}><img src="/logo.svg" alt="Fyxo" style={{ height: 48 }} /></div>
+          <div style={{ marginBottom: 12 }}><img src="/logo-emblem.svg" alt="Fyxo" style={{ height: 56 }} /></div>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('login.title')}</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>{t('login.subtitle')}</p>
         </div>
