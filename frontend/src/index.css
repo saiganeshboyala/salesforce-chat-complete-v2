@@ -1,5 +1,12 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+@font-face {
+  font-family: 'BigNoodleTitling-Oblique';
+  src: url('/big_noodle_titling_oblique.ttf') format('truetype');
+  font-style: italic;
+  font-weight: normal;
+}
+
 :root {
   --bg-primary: #0c0c0e;
   --bg-secondary: #131317;
@@ -73,7 +80,7 @@ body {
 
 /* ── Sidebar ────────────────────────────── */
 .sidebar-header { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.sidebar-logo { width: 28px; height: 28px; background: var(--accent); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: white; }
+.sidebar-logo { display: flex; align-items: center; justify-content: center; }
 .sidebar-title { font-weight: 600; font-size: 14px; }
 .sidebar-top { padding: 12px 10px 4px; flex-shrink: 0; }
 .sidebar-nav { padding: 8px 0 4px; }

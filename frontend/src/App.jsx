@@ -21,6 +21,8 @@ import { useChat } from './hooks/useChat'
 import { useToast } from './hooks/useToast'
 import { useTranslation, LANGUAGES } from './utils/i18n'
 
+// ── Fyxo Logo ────────────────────────────────────────
+
 // ── Icons ─────────────────────────────────────────────
 const I = {
   chat: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
@@ -190,11 +192,7 @@ function LoginPage({ onLogin }) {
         borderRadius: 'var(--radius-xl)', padding: '36px 32px',
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 14, background: 'var(--accent)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 18, color: 'white', marginBottom: 12,
-          }}>FC</div>
+          <div style={{ marginBottom: 12 }}><img src="/logo.svg" alt="Fyxo" style={{ height: 48 }} /></div>
           <h1 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>{t('login.title')}</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>{t('login.subtitle')}</p>
         </div>
@@ -423,8 +421,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="sidebar-logo">FC</div>
-          <span className="sidebar-title">Fyxo Chat</span>
+          <div className="sidebar-logo"><img src="/logo.svg" alt="Fyxo Chat" style={{ height: 32 }} /></div>
         </div>
 
         <div className="sidebar-top">

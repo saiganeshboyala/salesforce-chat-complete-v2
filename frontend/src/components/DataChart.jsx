@@ -14,7 +14,11 @@ function prepare(records) {
   if (!valKey) return null
   const labelKey = keys.find(k => k !== valKey) || keys[0]
   const data = records
-    .map(r => ({ name: String(r[labelKey] ?? 'N/A').replace(/__c$/,'').replace(/_/g,' '), value: Number(r[valKey]) || 0 }))
+    .map(r => {
+      let label = r[labelKey] ?? 'N/A'
+      if (label && typeof label === 'object') label = label.Name || label.name || JSON.stringify(label)
+      return { name: String(label).replace(/__c$/,'').replace(/_/g,' '), value: Number(r[valKey]) || 0 }
+    })
     .filter(d => d.value > 0)
   if (!data.length) return null
   return { data, type: data.length <= 8 ? 'pie' : 'bar' }

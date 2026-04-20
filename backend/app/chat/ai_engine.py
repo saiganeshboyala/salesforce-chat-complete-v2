@@ -176,6 +176,17 @@ REPORT_PATTERNS = [
         "labels": ["Interviews with Amounts"],
     },
     {
+        "keywords": ["performance of", "performance for", "performance report"],
+        "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH"},
+        "default_time": "LAST_WEEK",
+        "name_filter": True,
+        "queries": [
+            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE BU_Name__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Submission_Date__c LIMIT 200",
+            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE Onsite_Manager__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Interview_Date__c LIMIT 200",
+        ],
+        "labels": ["Submissions", "Interviews"],
+    },
+    {
         "keywords": ["student performance"],
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH"},
         "default_time": "LAST_WEEK",
@@ -232,8 +243,23 @@ def _match_report_pattern(question):
 
         resolved = []
         labels = pattern.get("labels", [])
+
+        # Extract person name for name_filter patterns
+        name_val = ""
+        if pattern.get("name_filter"):
+            import re as _re
+            name_match = _re.search(r'(?:performance\s+(?:of|for|report\s+(?:of|for))\s+)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
+            if name_match:
+                name_val = name_match.group(1).strip().rstrip('.')
+            if not name_val:
+                continue
+
         for i, q_template in enumerate(queries):
-            soql = q_template.replace("{time}", time_val) if time_val else q_template
+            soql = q_template
+            if time_val:
+                soql = soql.replace("{time}", time_val)
+            if name_val:
+                soql = soql.replace("{name}", name_val)
             label = labels[i] if i < len(labels) else f"Query {i+1}"
             resolved.append((soql, label))
 
@@ -267,7 +293,8 @@ KEY RULES:
 - "interviews" / "interview count" -> Interviews__c
 - "employees" / "employee" -> Employee__c
 - "jobs" / "placements" / "W2" -> Job__c
-- "BU performance" / "metrics" -> BU_Performance__c
+- "BU performance" / "metrics" (aggregate counts only) -> BU_Performance__c
+- "performance of [person name]" -> Submissions__c + Interviews__c (actual activity data, NOT BU_Performance__c)
 - "tech support" -> Tech_Support__c
 - "organizations" / "company" -> Organization__c
 - "pre marketing" / "premarketing" -> Student__c (PreMarketingStatus__c, Resume_Preparation__c, Otter fields)
@@ -450,7 +477,42 @@ EXAMPLE — "2 weeks no interviews by BU":
 | Arun Sharma | JAVA | 67 |
 | Priya Reddy | DE | 45 |
 
-⚠️ 8 students have been in market 45+ days with zero interviews — escalation recommended."""
+⚠️ 8 students have been in market 45+ days with zero interviews — escalation recommended.
+
+INDIVIDUAL BU/MANAGER PERFORMANCE:
+When asked "performance of [name]" or "performance for [name]":
+- Show actual submissions and interviews from the time period, NOT BU_Performance__c aggregate metrics.
+- Structure:
+  **[Name]'s Performance — Last Week**
+
+  **Submissions: [X]**
+  | Student | Client | Date |
+
+  **Interviews: [Y]**
+  | Student | Type | Status | Date |
+
+  Summary: X submissions, Y interviews
+
+WHATSAPP / MESSAGE DRAFTING:
+When user asks to "draft a message", "send to whatsapp", "write a message for":
+- Write a clear, professional, concise message with SPECIFIC numbers from the data.
+- Include: total submissions, total interviews, any confirmations, top-performing students by name.
+- Format as a ready-to-copy message (no markdown bold — use plain text for WhatsApp).
+- Keep it under 200 words. Be direct and data-driven.
+- Example format:
+  ---
+  Hi [Name],
+
+  Here's your team's performance summary for last week:
+
+  Submissions: 25 (across 12 students)
+  Interviews: 8
+  Top students: Ravi Kumar (5 subs), Priya Sharma (4 subs)
+
+  Students needing attention: 3 with zero submissions
+
+  Great work on the submission volume! Let's focus on converting more interviews this week.
+  ---"""
 
 ROUTER_PROMPT = """Decide how to answer this Salesforce question. Return ONLY one word.
 Default to SOQL unless the question is clearly about finding similar/related records.
