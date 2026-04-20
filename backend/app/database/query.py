@@ -1420,23 +1420,19 @@ def soql_to_sql_with_joins(soql: str) -> str | None:
 
 async def execute_query(soql: str) -> dict:
     """
-    Smart executor: tries local PostgreSQL first (via SOQL→SQL conversion).
-    Falls back to Salesforce API if conversion fails (e.g., unsupported relationships).
-    Returns results in the same format as execute_soql().
+    Execute query on local PostgreSQL only (no Salesforce fallback).
+    Converts SOQL to SQL and runs against the synced database.
     """
-    # Try conversion with JOIN support first
     sql = soql_to_sql_with_joins(soql) if '__r' in soql else soql_to_sql(soql)
 
-    if sql:
-        logger.info(f"Using PostgreSQL: {sql[:200]}")
-        result = await execute_sql(sql)
-        if "error" not in result:
-            return result
-        logger.warning(f"PostgreSQL failed, falling back to Salesforce: {result['error'][:150]}")
+    if not sql:
+        logger.warning(f"Could not convert SOQL to SQL: {soql[:200]}")
+        return {"error": f"Could not convert query to PostgreSQL SQL. SOQL: {soql[:200]}", "records": [], "totalSize": 0}
 
-    # Fallback to Salesforce (skip PostgreSQL retry in execute_soql)
-    from app.salesforce.soql_executor import execute_soql
-    logger.info(f"Using Salesforce API: {soql[:150]}")
-    return await execute_soql(soql, force_salesforce=True)
+    logger.info(f"PostgreSQL: {sql[:200]}")
+    result = await execute_sql(sql)
+    if "error" in result:
+        logger.warning(f"PostgreSQL query failed: {result['error'][:200]}")
+    return result
 
 
