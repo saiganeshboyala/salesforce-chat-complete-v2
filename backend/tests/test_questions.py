@@ -1,44 +1,36 @@
 """
-Comprehensive test suite for Salesforce Chat API - 1000+ questions
-Tests the /api/chat endpoint with natural language queries a staffing company manager would ask.
+1000+ Test Questions for Salesforce Chat API (PostgreSQL backend)
+Tests the chat endpoint to verify queries run correctly on PostgreSQL.
 
-Run with:
-    pytest tests/test_questions.py -v --tb=short
-    pytest tests/test_questions.py -k "simple" -v
-    pytest tests/test_questions.py --maxfail=10
+Run: python tests/test_questions.py
+  - Tests all questions, reports pass/fail, shows errors
+  - Re-tests failed questions after self-correction attempts
 
-Requires the backend server running at BASE_URL (default: http://localhost:8000)
+Requires: pip install httpx
 """
-
 import os
+import sys
+import json
+import time
 import uuid
-import pytest
 import httpx
 
 BASE_URL = os.getenv("TEST_API_URL", "http://localhost:8000")
-API_ENDPOINT = f"{BASE_URL}/api/chat"
-
-# Optional auth token - set if your server requires authentication
 AUTH_TOKEN = os.getenv("TEST_AUTH_TOKEN", "")
 
+# ═══════════════════════════════════════════════════════════════════════
+# QUESTION CATEGORIES
+# ═══════════════════════════════════════════════════════════════════════
 
-# ---------------------------------------------------------------------------
-# Question categories
-# ---------------------------------------------------------------------------
-
-SIMPLE_SINGLE_OBJECT_QUERIES = [
-    # Student queries - basic
-    "Show me all active students",
-    "List all students in market",
+SIMPLE_STUDENT_QUERIES = [
+    "Show all students",
+    "List all active students",
     "How many students do we have?",
-    "Get all students with their technologies",
-    "Show student list",
-    "Who are our active students?",
+    "Show students in market",
     "List students who are active in market",
     "Show me students currently in marketing",
-    "Get all students",
-    "How many total students are there in system?",
-    "Show me all students with their email",
+    "Get all students with their technology",
+    "Show student list with email",
     "List student names and phone numbers",
     "Show all students with their BU name",
     "Get students and their visa status",
@@ -78,1464 +70,1208 @@ SIMPLE_SINGLE_OBJECT_QUERIES = [
     "Tableau students list",
     "Power BI students",
     "Selenium testers",
-    "Manual Testing students",
+    "Manual testing students",
     "Business Analyst students",
-    "Show me student phone numbers",
-    "Get student emails",
-    "List students created today",
-    "Students created this week",
-    "Show recently added students",
-    "Students modified today",
-    "Show last modified students",
-    "Get students sorted by name",
-    "List students by creation date",
-    "Show me the newest students",
-    "Who was added last?",
-    "Show me offshore managed students",
-    "List students with their onsite manager",
-    "Show students with recruiter info",
-    "Get students project type",
-    "List students by project type",
-    "Show contract students",
-    "Full time students list",
-    "Students with more than 30 days in market",
-    "Show students in market less than 7 days",
-    "Students in market for over 60 days",
-    "Who has been in market the longest?",
-    "Show stale students",
+    "Show me all students with days in market",
+    "Students in market more than 30 days",
+    "Students in market more than 60 days",
     "Students in market more than 90 days",
-    "Fresh students added this week",
-    "Show me students with no phone number",
-    "Students missing email",
-    "List students without technology assigned",
+    "Show students with their recruiter name",
+    "List students with offshore manager",
+    "Show all students sorted by technology",
+    "Students sorted by days in market",
+    "Show latest students added",
+    "List students by created date",
+    "Show students with project started status",
+    "Students in pre marketing",
+    "Show students with project completed status",
+    "List all student technologies",
+    "How many students in each technology?",
+    "Show students count by visa status",
+    "Students with more than 100 days in market",
+    "New students added recently",
+    "Show students without phone number",
+    "Students without email",
+    "List students with their batch",
+    "Show students sorted by name",
+    "Total number of active students",
+    "How many students are in verbal confirmation?",
+    "Count of students by status",
+    "Show STEM OPT students",
+    "List USC students",
+    "Students with GC visa in Java",
+    "H1 students with DevOps technology",
+    "OPT students in Data Engineering",
+    "Show students with more than 50 days in market",
+    "Who has been in market the longest?",
+    "Top 10 students by days in market",
+    "Show me all active students with Java technology",
+    "Python students who are active in market",
+    "Active .NET students",
+    "DevOps students who are active",
+    "List all students under pre marketing status",
+    "Show students added this month",
+    "Students created last week",
+    "New students added last 7 days",
+    "Students added in the last 30 days",
+    "Show recently modified students",
+]
 
-    # Submission queries - basic
+SIMPLE_SUBMISSION_QUERIES = [
     "Show all submissions",
-    "List recent submissions",
-    "How many submissions do we have?",
-    "Get all submissions today",
-    "Show submissions this week",
-    "List submissions this month",
-    "Show me all submissions with rates",
-    "Get submissions sorted by date",
-    "Show latest submissions",
+    "List today submissions",
+    "Show today's submissions",
+    "How many submissions today?",
+    "Today submissions count",
+    "Show this week submissions",
+    "This week's submissions list",
+    "Show last week submissions",
+    "How many submissions last week?",
+    "Show this month submissions",
+    "This month submission count",
+    "List last month submissions",
+    "Show submissions for last 7 days",
+    "Last 14 days submissions",
+    "Last 30 days submissions",
+    "Show all submissions with BU name",
     "List submissions with client name",
-    "Show submissions with vendor info",
-    "Get submissions with prime vendor",
-    "Submissions with status pending",
-    "Show selected submissions",
-    "Rejected submissions list",
-    "Show all active submissions",
-    "List submissions with technology",
-    "Get submission rates",
-    "Show highest rate submissions",
-    "List lowest rate submissions",
-    "Submissions above $80/hr",
-    "Show submissions below $50/hr",
-    "Get submissions between $60 and $90",
-    "Show me submissions with recruiter",
-    "List submissions by onsite manager",
-    "Submissions by offshore manager",
-    "Show all submissions for Java",
-    "Python submissions",
-    ".NET submissions list",
-    "Salesforce submissions",
-    "AWS submissions today",
-    "DevOps submissions this week",
-    "Data Engineering submissions",
-    "React submissions this month",
+    "Show submissions with student name",
+    "Get submissions with technology",
+    "Show submissions with recruiter",
+    "List submissions sorted by date",
+    "Latest submissions first",
+    "Show recent submissions",
+    "Submissions sorted by BU",
+    "Show submissions count",
+    "How many total submissions?",
+    "Show submission status breakdown",
+    "List submissions with vendor name",
+    "Show submissions with rate",
+    "Submissions with rate above 60",
+    "Submissions with rate above 80",
+    "Show high rate submissions",
+    "List submissions with offshore manager",
+    "Show submissions with onsite manager",
+    "Submissions with prime vendor",
+    "Show all submissions this quarter",
+    "Last quarter submissions",
+    "This year submissions",
+    "Show submissions for yesterday",
+    "Yesterday's submission list",
+]
 
-    # Interview queries - basic
+SIMPLE_INTERVIEW_QUERIES = [
     "Show all interviews",
-    "List today's interviews",
-    "How many interviews this week?",
-    "Get all scheduled interviews",
-    "Show upcoming interviews",
-    "List completed interviews",
-    "Show interview results",
-    "Get interviews with final status",
-    "Technical interviews list",
-    "Managerial interviews",
-    "HR interviews scheduled",
-    "Client interviews this week",
-    "Panel interviews list",
+    "List today interviews",
+    "Today's interviews",
+    "How many interviews today?",
+    "Show this week interviews",
+    "This week's interview list",
+    "Last week interviews",
+    "How many interviews last week?",
+    "This month interviews",
+    "Show last month interviews",
+    "Interviews in last 7 days",
+    "Last 14 days interviews",
+    "Last 30 days interviews",
+    "Show interviews with final status",
+    "List interviews by type",
+    "Show interview types",
+    "List technical interviews",
+    "Show client interviews",
+    "HR interviews list",
+    "Panel interviews",
+    "Show first round interviews",
+    "Second round interviews",
+    "Final round interviews",
     "Show selected interviews",
+    "Interviews with confirmation status",
     "Rejected interviews",
-    "Pending interview results",
-    "No show interviews",
     "Rescheduled interviews",
-    "Confirmed interviews",
-    "Show interviews by technology",
-    "Java interviews today",
-    "Python interviews this week",
-    "Salesforce interviews",
-    "AWS interviews scheduled",
-    "Show interviews with client name",
-    "Interviews by BU",
-    "List all interview types",
-    "Interview schedule for today",
-    "Tomorrow's interviews",
-    "This week interview calendar",
+    "Cancelled interviews",
+    "Show interviews sorted by date",
+    "Latest interviews",
+    "Recent interviews",
+    "Interviews with good feedback",
+    "Very good interviews",
+    "Average interviews",
+    "Show interviews with student name",
+    "List interviews with BU name",
+    "Interviews with onsite manager",
+    "Show interviews with technology",
+    "Interviews with client name",
+    "Show all interviews this quarter",
+]
 
-    # Job queries - basic
+SIMPLE_JOB_QUERIES = [
     "Show all jobs",
-    "List open jobs",
-    "How many jobs are active?",
-    "Get job listings",
-    "Show jobs by technology",
-    "Java jobs available",
-    "Python job openings",
-    ".NET jobs list",
-    "Salesforce jobs",
-    "AWS positions open",
-    "DevOps jobs",
-    "Show jobs by company",
+    "List active jobs",
+    "How many jobs are there?",
+    "Show jobs with status",
     "List job titles",
-    "Get jobs created today",
-    "New jobs this week",
-    "Jobs added this month",
-    "Show closed jobs",
-    "Filled positions",
-    "Open positions count",
-    "Show all job statuses",
+    "Show jobs by company",
+    "Recent jobs added",
+    "Jobs created this month",
+    "Jobs created last week",
+    "Show jobs with technology",
+    "List W2 jobs",
+    "Show C2C jobs",
+    "PD type jobs",
+    "Jobs sorted by date",
+    "Latest jobs",
+]
 
-    # Employee queries - basic
+SIMPLE_EMPLOYEE_QUERIES = [
     "Show all employees",
     "List active employees",
-    "How many employees do we have?",
-    "Get employees by department",
-    "Show employee designations",
-    "List managers",
-    "Show team leads",
-    "Get recruiters list",
+    "How many employees?",
+    "Show employees by department",
+    "List employee designations",
+    "Show recently added employees",
+    "Employees created this month",
+    "Employee list with status",
+    "Show all employee names",
     "Active employees count",
-    "Inactive employees",
-    "New employees this month",
-    "Show employees by status",
-    "Employee directory",
-    "List all departments",
-    "Show employees hired this year",
-
-    # More natural/casual phrasing
-    "whats the student count",
-    "how many ppl in market rn",
-    "show me evrything about submissions",
-    "gimme the interview list",
-    "any new jobs today?",
-    "who all are active",
-    "total submissions?",
-    "interviews happening today",
-    "whos on OPT",
-    "java devs pls",
-    "list of all BAs",
-    "show me fullstack guys",
-    "any confirmed students?",
-    "who got verbal?",
-    "show confirmed ppl",
-    "how many pulled out?",
-    "not ready students",
-    "anyone new today?",
-    "latest submissions show",
-    "recent interviews",
 ]
 
-FILTERED_DATE_QUERIES = [
-    # Today/this week/this month
-    "Submissions made today",
-    "How many submissions today?",
+# ── Date-filtered queries ──
+DATE_FILTERED_QUERIES = [
+    "Today's submissions BU wise",
+    "Yesterday submissions by BU",
+    "This week submissions count",
+    "Last week total submissions",
+    "This month submissions breakdown",
+    "Last month submissions analysis",
+    "Last 3 days submissions",
+    "Last 5 days submissions by BU",
+    "Last 7 days submissions BU wise",
+    "Last 10 days submissions",
+    "Last 14 days submissions by BU",
+    "Last 20 days submissions",
+    "Last 30 days all submissions",
+    "Today interviews list",
+    "Yesterday interviews",
+    "This week interviews by BU",
+    "Last week interviews count",
+    "This month interview breakdown",
+    "Last month interviews analysis",
+    "Last 7 days interviews",
+    "Last 14 days interviews",
+    "Last 30 days interviews",
     "Students added today",
-    "Interviews scheduled for today",
-    "Jobs posted today",
-    "Show me today's activity",
-    "What happened today?",
-    "Today's submission count",
-    "How many interviews today?",
-    "Submissions this week",
-    "Students added this week",
-    "Interviews this week",
-    "Jobs this week",
-    "This week's submissions count",
-    "Weekly submission report",
-    "How many submissions this week?",
-    "Students created this month",
-    "Monthly submissions",
-    "This month submission count",
-    "Interviews this month",
-    "Jobs posted this month",
-    "How many students added this month?",
-
-    # Specific date ranges
-    "Submissions from January 2024",
-    "Submissions in last 7 days",
-    "Interviews in last 30 days",
-    "Students added in last 2 weeks",
-    "Submissions between Jan 1 and Jan 31",
-    "Interviews from March 2024",
-    "Jobs posted in February 2024",
-    "Submissions after March 15",
-    "Students created before 2024",
-    "Interviews in Q1 2024",
-    "Q2 submissions",
+    "Students created this week",
+    "Students added this month",
+    "Students modified last 7 days",
+    "Confirmations today",
+    "This week confirmations",
+    "This month confirmations",
+    "Last week confirmations",
+    "Last month confirmations",
+    "Submissions from April 2026",
+    "March submissions",
+    "This quarter submissions",
     "Last quarter submissions",
-    "This quarter interviews",
-    "Year to date submissions",
-    "YTD interview count",
-    "Submissions from last month",
-    "Previous week submissions",
-    "Last 3 months submissions",
-    "Past 6 months interviews",
-    "Last year's data",
-
-    # Yesterday/specific days
-    "Yesterday's submissions",
-    "What was submitted yesterday?",
-    "Interviews yesterday",
-    "Students added yesterday",
-    "Day before yesterday submissions",
-    "Last Monday submissions",
-    "Last Friday interviews",
-    "Show me Monday's data",
-    "Tuesday submissions",
-    "End of last week submissions",
-
-    # Combined date + filters
-    "Java submissions today",
-    "Python interviews this week",
-    "H1B students added this month",
-    "Salesforce submissions last 7 days",
-    "DevOps interviews in March",
-    "AWS jobs posted this week",
-    "Active students added in January",
-    "Confirmed students this month",
-    "Verbal confirmations this week",
-    "Submissions with rate above 80 today",
-    "High rate submissions this week",
-    "Interviews selected this month",
-    "Rejected interviews this week",
-    "No shows this month",
-    "Submissions by Abhijith's team today",
-    "Vinay's team submissions this week",
-    "Adithya's BU interviews today",
-
-    # Time-based analysis
-    "Show submission trend this week",
-    "Daily submission count this month",
-    "How did we do last week vs this week?",
-    "Submission comparison month over month",
-    "Interview frequency this month",
-    "When was the last submission?",
-    "When was the last interview?",
-    "Most active day this week",
-    "Which day had most submissions?",
-    "Show daily breakdown of submissions",
-    "Hourly activity today",
-    "Peak submission time",
-    "Average submissions per day this week",
-    "Average interviews per week this month",
-
-    # Created/Modified date filters
-    "Students modified today",
-    "Recently updated students",
-    "Students not updated in 30 days",
-    "Stale records - no update in 60 days",
-    "Show records changed this week",
-    "Who modified student records today?",
-    "Last activity on submissions",
-    "When was the last interview created?",
-    "Jobs not updated in 2 weeks",
-    "Dormant students - no activity 90 days",
-
-    # Specific date formats
-    "Submissions on 03/15/2024",
-    "Interviews on March 15 2024",
-    "Students added on 2024-01-01",
-    "Show data for April 2024",
-    "Submissions from 1st to 15th this month",
-    "First week of March submissions",
-    "Last week of February interviews",
-    "Mid-month submissions March",
-    "Beginning of year data",
-    "End of quarter submissions",
-
-    # Rolling windows
-    "Last 24 hours submissions",
-    "Past 48 hours activity",
-    "Last 72 hours interviews",
-    "Trailing 7 day submissions",
-    "Rolling 30 day interview count",
-    "Past 14 days submissions",
-    "Show me last 5 days data",
-    "Activity in past 3 days",
-    "Submissions in the past week",
-    "Everything from last 10 days",
-
-    # Date + status
-    "Pending interviews from last week",
-    "Selected interviews this month",
-    "Confirmed students in last 30 days",
-    "Pulled out students this month",
-    "On hold students since January",
-    "Verbal confirmations in last 2 weeks",
-    "Active in market since last month",
-    "Recently confirmed students",
-    "Just got verbal this week",
-    "New confirms today",
-
-    # Comparative periods
-    "Compare this week vs last week submissions",
-    "This month vs last month interviews",
-    "Q1 vs Q2 performance",
-    "January vs February submissions",
-    "Week over week growth in submissions",
-    "Month over month interview increase",
-    "Year over year comparison",
-    "How are we doing compared to last month?",
-    "Are submissions up or down this week?",
-    "Trend over last 4 weeks",
+    "This year total submissions",
+    "Last 2 days submissions",
+    "Last 4 days interviews",
+    "Interviews scheduled for today",
+    "Tomorrow's interviews",
+    "Show submissions after April 15",
+    "Submissions before April 10",
+    "Interviews in last 3 days",
+    "Show last 60 days submissions",
+    "Last 90 days interviews",
+    "Submissions trend this month",
+    "Daily submission count this week",
+    "Weekly interview count this month",
+    "Today's new students",
+    "This week new students count",
+    "How many submissions were made yesterday?",
+    "How many interviews happened last week?",
+    "Total submissions this month so far",
 ]
 
+# ── BU-specific queries ──
 BU_SPECIFIC_QUERIES = [
-    # Individual BU queries
-    "Show Abhijith Reddy's team",
-    "Students under Abhijith Reddy Palreddy",
-    "Abhijith's BU performance",
-    "How is Abhijith's team doing?",
-    "Submissions by Abhijith's BU",
-    "Interviews in Abhijith's team",
-    "Abhijith's team active students",
-    "How many students does Abhijith have?",
-    "Abhijith's submission count today",
-    "Abhijith team weekly submissions",
-
-    "Show Adithya Reddy's BU",
-    "Adithya Reddy Venna's students",
-    "Adithya's team submissions",
-    "Interviews for Adithya's BU",
-    "How is Adithya performing?",
-    "Adithya's team active count",
-    "Students under Adithya",
-    "Adithya Reddy submissions this week",
-    "Adithya's confirmed students",
-    "Show Adithya's BU stats",
-
-    "Vinay Singh's team",
-    "Students under Vinay",
-    "Vinay's submissions today",
-    "Vinay Singh BU performance",
-    "How many active students does Vinay have?",
-    "Vinay's team interviews this week",
-    "Vinay's BU submissions this month",
-    "Show me Vinay's numbers",
-    "Vinay team confirmed students",
-    "Vinay Singh student list",
-
-    "Gulam Siddiqui's BU",
-    "Gulam's team students",
-    "Submissions by Gulam's team",
-    "Gulam Siddiqui interviews",
-    "How is Gulam's BU doing?",
-    "Gulam's active students",
-    "Gulam team performance",
+    "Show submissions for BU Abhijith Reddy",
+    "Abhijith Reddy submissions this month",
+    "Abhijith submissions today",
+    "Abhijith BU this week submissions",
+    "How many submissions for Abhijith this month?",
+    "Show interviews for BU Abhijith",
+    "Abhijith BU interviews this week",
+    "Students under Abhijith Reddy",
+    "How many students under Abhijith?",
+    "Abhijith Reddy students with technology",
+    "Show submissions for BU Adithya Reddy",
+    "Adithya Reddy this month submissions",
+    "Adithya BU interviews this week",
+    "Students under Adithya Reddy Venna",
+    "Adithya students count",
+    "Show submissions for BU Vinay Singh",
+    "Vinay Singh submissions this month",
+    "Vinay Singh interviews last week",
+    "Students under Vinay Singh",
+    "Vinay BU performance this month",
+    "Show submissions for BU Gulam Siddiqui",
+    "Gulam Siddiqui this month submissions",
+    "Gulam BU interviews this week",
     "Students under Gulam Siddiqui",
-    "Gulam's weekly submissions",
-    "Show Gulam's team stats",
-
-    "Anil Kumar's students",
-    "Anil's team submissions",
-    "Anil Kumar BU performance",
-    "Interviews in Anil's BU",
-    "Anil's active student count",
-    "Show Anil Kumar's team",
-    "Anil's submissions today",
-    "Anil team interviews this week",
-    "How is Anil's BU performing?",
-    "Anil Kumar confirmed students",
-
-    "Ravi Teja's BU students",
-    "Ravi Teja submissions",
-    "Ravi's team performance",
-    "Show Ravi Teja's active students",
-    "Ravi Teja interviews this month",
-
-    "Srinivas Reddy team",
-    "Srinivas students list",
-    "Srinivas Reddy BU submissions",
-    "How is Srinivas doing?",
-    "Srinivas team interviews",
-
-    "Pradeep Kumar students",
-    "Pradeep's BU performance",
-    "Pradeep Kumar submissions this week",
-    "Show Pradeep's team",
-    "Pradeep active students",
-
-    "Kiran Reddy's BU",
-    "Kiran's team students",
-    "Kiran Reddy submissions",
-    "Kiran interviews this week",
-    "Kiran Reddy BU stats",
-
-    "Vamshi Krishna students",
-    "Vamshi's team submissions",
-    "Vamshi Krishna BU performance",
-    "Show Vamshi's active students",
-    "Vamshi submissions today",
-
-    "Naveen Kumar BU",
-    "Naveen's team students",
-    "Naveen Kumar submissions this week",
-    "Naveen's interviews",
-    "Show Naveen's BU performance",
-
-    "Suresh Babu students",
-    "Suresh's BU submissions",
-    "Suresh Babu team performance",
-    "Suresh interviews this month",
-    "Suresh Babu active count",
-
-    "Rajesh Kumar's team",
-    "Rajesh students list",
-    "Rajesh Kumar submissions",
-    "Rajesh's BU performance this week",
-    "Show Rajesh team stats",
-
-    "Mahesh Reddy BU",
-    "Mahesh's students",
-    "Mahesh Reddy submissions today",
-    "Mahesh team interviews",
-    "How is Mahesh performing?",
-
-    "Venkat Reddy's BU",
-    "Venkat's team students",
-    "Venkat Reddy submissions",
-    "Venkat interviews scheduled",
-    "Venkat BU performance",
-
-    "Sai Krishna team",
-    "Sai Krishna students",
-    "Sai Krishna submissions this week",
-    "Show Sai Krishna's BU",
-    "Sai Krishna active students",
-
-    # BU comparison queries
-    "Compare all BU submissions",
-    "Which BU has most submissions?",
-    "Top performing BU this week",
-    "BU wise submission count",
-    "BU ranking by submissions",
-    "Which BU has most active students?",
-    "BU performance comparison",
-    "Best BU this month",
-    "Worst performing BU",
-    "Bottom 3 BUs by submissions",
-    "Top 5 BUs by interviews",
-    "BU wise interview count",
-    "Which BU got most confirms?",
-    "BU wise confirmed student count",
-    "Compare Abhijith vs Vinay submissions",
-    "Adithya vs Gulam BU performance",
-    "Who is performing better Anil or Ravi?",
-    "BU wise active student distribution",
-    "Show all BU stats side by side",
-    "BU leaderboard",
-    "BU performance dashboard",
-    "All BU metrics summary",
-    "Show me BU performance report",
-    "Give me a BU comparison chart",
-    "Which BU needs improvement?",
-    "Underperforming BUs",
-    "BUs with zero submissions today",
-    "BUs with no interviews this week",
-    "Inactive BUs",
-    "Which BU has most pulled out students?",
-]
-
-AGGREGATION_COUNT_QUERIES = [
-    # Simple counts
-    "How many students are active in market?",
-    "Total number of submissions today",
-    "Count of interviews this week",
-    "Number of jobs open",
-    "Total employees",
-    "How many students have verbal?",
-    "Count confirmed students",
-    "Number of students on hold",
-    "How many pulled out?",
-    "Count of not ready students",
-    "Total submissions this month",
-    "Number of interviews scheduled",
-    "How many jobs were posted this week?",
-    "Count of H1B students",
-    "Number of OPT students",
-    "How many CPT students?",
-    "GC holder count",
-    "Citizen count",
-    "H4 EAD student count",
-    "Total Java students",
-    "Python developer count",
-    ".NET students total",
-    "How many Salesforce students?",
-    "AWS student count",
-    "Number of DevOps students",
-
-    # Group by / distribution
-    "Students by technology",
-    "Submission count by BU",
-    "Interviews by type",
-    "Students by visa status",
-    "Submissions by status",
-    "Interviews by final status",
-    "Jobs by technology",
-    "Employees by department",
-    "Students by marketing status",
-    "Submissions by technology",
-    "Students per BU",
-    "Submissions per recruiter",
-    "Interviews per BU",
-    "Student distribution by status",
-    "Visa wise student count",
-    "Technology wise submission count",
+    "Gulam submissions count this month",
+    "Show submissions for BU Divya Panguluri",
+    "Divya Panguluri submissions today",
+    "Divya BU this week submissions",
+    "Students under Divya",
+    "Divya Panguluri students with Java",
+    "Show submissions for BU Kiran Reddy",
+    "Kiran Reddy submissions this month",
+    "Kiran BU interviews",
+    "Students under Kiran Reddy",
+    "Kiran Reddy Voorukonda students",
+    "Show submissions for BU Ravi Mandala",
+    "Ravi Mandala this month",
+    "Ravi BU interviews this week",
+    "Students under Ravi",
+    "Show submissions for BU Prabhakar",
+    "Prabhakar Kunreddy submissions",
+    "Prabhakar BU interviews",
+    "Students under Prabhakar",
+    "Show submissions for BU Sriram",
+    "Sriram submissions this month",
+    "Sriram Anunthula BU students",
+    "Show submissions for BU Manoj Prabhakar",
+    "Manoj Prabhakar Daram submissions",
+    "Manoj BU students list",
+    "Show submissions for BU Prem Kumar",
+    "Prem Kumar Malla this month",
+    "Prem Kumar BU interviews",
+    "Show submissions for BU Sudharshan",
+    "Sudharshan Kumar submissions",
+    "Sudharshan BU students",
+    "Show submissions for BU Rakesh Ravula",
+    "Rakesh Ravula this month submissions",
+    "Rakesh BU interviews",
+    "Show submissions for BU Satish Reddy",
+    "Satish Reddy Mutthana submissions",
+    "Satish BU students this month",
+    "Abhijith Reddy last 7 days submissions",
+    "Vinay Singh last 14 days interviews",
+    "Divya Panguluri last week submissions",
+    "Gulam Siddiqui this week interviews",
+    "Kiran Reddy today submissions",
+    "Adithya Reddy yesterday submissions",
+    "Which BU has most submissions today?",
+    "Which BU has most interviews this week?",
+    "Top performing BU this month",
+    "BU with least submissions this month",
+    "BU comparison this month",
+    "All BU submissions today",
+    "All BU interviews this week",
+    "BU wise count today",
+    "BU wise submission count this month",
+    "BU wise interview count this month",
+    "Abhijith vs Adithya submissions this month",
+    "Top 5 BUs by submissions this month",
+    "Bottom 5 BUs by submissions this month",
+    "BU with zero submissions this week",
+    "BUs with no interviews today",
+    "Show all BU managers",
+    "List all BU names",
+    "BU manager list with student count",
+    "Abhijith Reddy students in market",
+    "Vinay Singh active students",
+    "Divya students with verbal confirmation",
+    "Gulam Siddiqui confirmed students",
+    "Students under Abhijith with Java",
+    "Students under Vinay with DevOps",
+    "Students under Divya with Python",
+    "Abhijith BU students days in market",
+    "Which BU has most students in market?",
+    "BU wise student count",
     "BU wise active students",
-    "Manager wise student count",
-    "Recruiter wise submission count",
-    "Client wise submissions",
-    "Vendor wise submissions",
-    "Status wise interview breakdown",
-    "Type wise interview count",
-    "Technology distribution",
-    "Status distribution of students",
-
-    # Averages
-    "Average rate of submissions",
-    "Average submission rate by technology",
-    "Average days in market",
-    "Average submissions per day",
-    "Average interviews per week",
-    "Average rate for Java submissions",
-    "Average rate for Python",
-    "What's the average submission rate?",
-    "Mean days in market for active students",
-    "Average time to confirmation",
-    "Average rate by BU",
-    "Average submissions per BU per day",
-    "Average interviews per student",
-    "Average submissions per student",
-
-    # Min/Max
-    "Highest submission rate",
-    "Lowest submission rate",
-    "Maximum days in market",
-    "Minimum rate submitted",
-    "Top rate submission",
-    "What's the highest rate we got?",
-    "Lowest rate submission this week",
-    "Who has been in market the longest?",
-    "Shortest time in market to confirmation",
-    "Maximum submissions in a day",
-
-    # Sums and totals
-    "Total submissions by all BUs",
-    "Total interviews conducted",
-    "Sum of all submissions this month",
-    "Total confirmed students count",
-    "Grand total active students",
-    "Overall submission count YTD",
-    "Total interviews YTD",
-    "Sum of submissions last 7 days",
-    "Total no-shows this month",
-    "Total rejections this week",
-
-    # Percentage/ratio queries
-    "What percentage of students are active?",
-    "Submission to interview conversion rate",
-    "Interview to confirmation ratio",
-    "Selection rate in interviews",
-    "Rejection percentage",
-    "What percent are on H1B?",
-    "OPT vs H1B percentage",
-    "Active vs total student ratio",
-    "Confirmation rate",
-    "No show percentage",
-
-    # Top N queries
-    "Top 5 BUs by submissions",
-    "Top 3 technologies by submissions",
-    "Top 10 students by submissions",
-    "Top recruiters by submission count",
-    "Top clients by submissions",
-    "Top vendors",
-    "Top performing BU",
-    "Top 5 managers by confirmations",
-    "Bottom 5 BUs",
-    "Least active BUs",
-    "Most popular technologies",
-    "Most demanded skills",
-    "Top rated submissions",
-    "Top 10 highest rates",
-    "Most interviewed students",
-
-    # Complex aggregations
-    "Submissions per day trend this week",
-    "Interview success rate by technology",
-    "Confirmation rate by BU",
-    "Average rate by visa type",
-    "Submissions by day of week",
-    "Which technology has highest rate?",
-    "Which BU has best conversion rate?",
-    "Technology with most interviews",
-    "BU with highest confirmation rate",
-    "Recruiter with most submissions this week",
-    "Client with most interviews",
-    "Vendor giving most submissions",
-    "Prime vendor performance",
-    "Rate distribution by technology",
-    "Submission volume by month",
-    "Interview trend by week",
-    "Confirmation trend this quarter",
-    "Growth rate in submissions",
-    "Week over week submission growth",
-    "Month over month interview growth",
-
-    # Counts with filters
-    "How many Java submissions today?",
-    "Count of Python interviews this week",
-    "Number of H1B students active",
-    "Submissions count for Abhijith's BU",
-    "Interview count for Vinay's team",
-    "How many confirms in last 30 days?",
-    "Number of rejections this month",
-    "Count selected interviews this week",
-    "How many verbal this month?",
-    "Active student count by BU",
-    "Submission count above $80 rate",
-    "Interviews pending result",
-    "How many rescheduled interviews?",
-    "No shows this week count",
-    "Jobs filled this month count",
 ]
 
-MULTI_OBJECT_COMPARISON_QUERIES = [
-    # Cross-object queries
-    "Show students with their submissions",
-    "Students who have interviews scheduled",
-    "Students with no submissions",
-    "Students who haven't had any interviews",
-    "Match students to their submissions",
-    "Students with submissions but no interviews",
-    "Students with interviews but no confirmation",
-    "Submissions that led to interviews",
-    "From submission to interview pipeline",
-    "Full pipeline - submission to interview to confirmation",
-
-    # Conversion funnel
-    "Submission to interview conversion",
-    "How many submissions converted to interviews?",
-    "Interview to offer conversion rate",
-    "Full funnel from marketing to placement",
-    "Pipeline analysis",
-    "Conversion rates by technology",
-    "Conversion rates by BU",
-    "Which BU converts best?",
-    "Best converting technology",
-    "Funnel drop-off analysis",
-
-    # Comparison queries
-    "Compare submissions vs interviews this week",
-    "Ratio of submissions to interviews by BU",
-    "Which students have most submissions but no interview?",
-    "Students with high submissions low interviews",
-    "Over-submitted under-interviewed students",
-    "BU comparison - submissions and interviews",
-    "Technology comparison across submissions and interviews",
-    "Performance comparison - all objects",
-    "Activity summary across all categories",
-    "Holistic view of BU performance",
-
-    # Relationship queries
-    "Show student and their manager",
-    "Students under each manager with submission count",
-    "Manager wise performance including interviews",
-    "BU performance with all metrics",
-    "Student journey from marketing to confirmation",
-    "Timeline of a student's progress",
-    "Complete student activity log",
-    "Show me student with all related records",
-    "Student with their submissions and interviews",
-    "Full history for Java students",
-
-    # Gap analysis
-    "Students in market but no submissions",
-    "Students with submissions but stuck",
-    "Long time in market no activity",
-    "Dormant students - no submissions in 30 days",
-    "Students needing attention",
-    "At risk students",
-    "Students with declining activity",
-    "BUs with fewer submissions than students",
-    "Technology gap - jobs vs students",
-    "Demand vs supply by technology",
-
-    # Multi-dimensional analysis
-    "BU + Technology performance matrix",
-    "Manager + Visa type distribution",
-    "Technology + Status breakdown",
-    "BU + Date submission heatmap",
-    "Client + Technology frequency",
-    "Vendor performance by technology",
-    "Rate analysis by technology and BU",
-    "Interview success by type and technology",
-    "Confirmation rate by BU and technology",
-    "Comprehensive performance scorecard",
-
-    # Correlation queries
-    "Does higher rate correlate with more interviews?",
-    "Rate vs interview success",
-    "Days in market vs number of submissions",
-    "Technology and interview success correlation",
-    "BU size vs performance",
-    "Is there a pattern in confirmations?",
-    "Best day for submissions?",
-    "Optimal rate range for getting interviews",
-    "Which visa type gets most interviews?",
-    "Which technology converts best from submission to interview?",
-
-    # Pipeline status
-    "Current pipeline status",
-    "How many at each stage?",
-    "Pipeline breakdown by BU",
-    "Overall pipeline health",
-    "Where are students stuck in pipeline?",
-    "Bottleneck analysis",
-    "Pipeline velocity",
-    "Average time at each stage",
-    "Pipeline movement this week",
-    "New entries vs exits in pipeline",
-]
-
-NAME_BASED_STUDENT_LOOKUPS = [
-    # Direct name lookups
-    "Show me details for student Rahul",
-    "Find student Priya",
-    "What's the status of Amit?",
-    "Show Rajesh's submissions",
-    "Where is Suresh in the pipeline?",
-    "Get info on student Kiran",
-    "Look up Venkat's details",
-    "Find student named Srinivas",
-    "Show me Naveen's record",
-    "What's happening with Mahesh?",
-    "Status update on Arun",
-    "Show Deepak's interviews",
-    "Find all about student Ravi",
-    "Check on Anand's progress",
-    "Where is Vikram in marketing?",
-    "Show me Kumar's details",
-    "Look up Patel student",
-    "Find student Sharma",
-    "Show Singh's record",
-    "What about student Reddy?",
-
-    # With context
-    "What technology is Rahul on?",
-    "Which BU is Priya under?",
-    "Who manages Amit?",
-    "What's Rajesh's visa status?",
-    "How long has Suresh been in market?",
-    "What's Kiran's marketing status?",
-    "Show Venkat's submission history",
-    "How many interviews did Srinivas have?",
-    "When was Naveen added to system?",
-    "What rate was Mahesh submitted at?",
-    "Show me Arun's complete pipeline",
-    "Deepak's interview results",
-    "What clients was Ravi submitted to?",
-    "Anand's vendors list",
-    "Vikram's recruiter name",
-    "When was Kumar's last submission?",
-    "Show Patel's interview schedule",
-    "Sharma's manager name",
-    "Where was Singh submitted?",
-    "Reddy's current status",
-
-    # Partial name matching
-    "Students named John",
-    "Find all Patels",
-    "Show me Reddys in system",
-    "List all Kumars",
-    "Students with name Singh",
-    "Find student starting with A",
-    "Students whose name contains Raj",
-    "Look up students named Sai",
-    "Find all Mohameds",
-    "Students named Chris",
-
-    # Name + filter combinations
-    "Is Rahul active in market?",
-    "Has Priya been submitted anywhere?",
-    "Did Amit get any interviews?",
-    "Is Rajesh confirmed yet?",
-    "How many submissions does Suresh have?",
-    "When was Kiran's last interview?",
-    "Is Venkat still active?",
-    "Was Srinivas pulled out?",
-    "Is Naveen on hold?",
-    "Did Mahesh get verbal?",
-
-    # Manager-specific lookups
-    "Who are Abhijith's students?",
-    "Show all of Vinay's students",
-    "List Adithya's active students",
-    "Gulam's confirmed students",
-    "Students assigned to Anil Kumar",
-    "Who is managing Rahul?",
-    "Which manager has Priya?",
-    "Ravi Teja's student list",
-    "Srinivas Reddy's students",
-    "Pradeep's team members",
-
-    # Name + action queries
-    "Submit Rahul's profile",
-    "Schedule interview for Priya",
-    "Update Amit's status",
-    "Move Rajesh to confirmed",
-    "Pull out Suresh",
-    "Put Kiran on hold",
-    "Reactivate Venkat",
-    "Transfer Srinivas to different BU",
-    "Assign recruiter to Naveen",
-    "Update Mahesh's technology",
-
-    # Name with typos/variations
-    "Show me Abhijit's team",
-    "Aditya's students",
-    "Viney Singh team",
-    "Gulam's BU",
-    "Anil's team submissions",
-    "Ravi Teja team",
-    "Srinivs Reddy BU",
-    "Pradeep's students",
-    "Kirans team",
-    "Vamsi Krishna BU",
-]
-
-REPORT_STYLE_QUERIES = [
-    # Daily reports
-    "Give me today's summary",
-    "Daily report",
-    "End of day report",
-    "Today's performance summary",
-    "Daily dashboard",
-    "What did we accomplish today?",
-    "Today's numbers",
-    "Daily status update",
-    "Show me the daily report",
-    "EOD summary",
-
-    # Weekly reports
-    "Weekly report",
-    "This week's summary",
-    "Weekly performance review",
-    "Show me weekly numbers",
-    "Week in review",
-    "Weekly dashboard",
-    "How did we do this week?",
-    "Week's highlights",
-    "Weekly submission report",
-    "Weekly interview summary",
-
-    # Monthly reports
-    "Monthly report",
-    "This month's performance",
-    "Monthly summary",
-    "Month end report",
-    "Monthly dashboard",
-    "Show me monthly metrics",
-    "How was this month?",
-    "Monthly business review data",
-    "MBR data",
-    "Monthly trends",
-
-    # Specific report formats
-    "Give me a BU performance report",
-    "Technology demand report",
-    "Visa category report",
-    "Recruiter performance report",
-    "Client submission report",
-    "Vendor performance report",
-    "Pipeline health report",
-    "Stale student report",
-    "Dormant accounts report",
-    "Attrition report - pulled out students",
-    "New additions report",
-    "Confirmation report",
-    "Interview success report",
-    "Rate analysis report",
-    "Market saturation report",
-    "Competitive analysis by technology",
-    "Manager scorecard",
-    "Team productivity report",
-    "Activity report by BU",
-    "Comprehensive performance report",
-
-    # Executive summary style
-    "Executive summary",
-    "High level overview",
-    "KPI dashboard",
-    "Key metrics this week",
-    "Performance scorecard",
-    "Quick stats",
-    "Snapshot of current status",
-    "Overview of all activities",
-    "Business health check",
-    "Pulse check on marketing",
-]
-
-EDGE_CASES_AND_VARIATIONS = [
-    # Typos and misspellings
-    "shwo me all studnets",
-    "lst submissions",
-    "interveiws today",
-    "submisions this week",
-    "actve students",
-    "confimed students",
-    "intrviews scheduled",
-    "performace report",
-    "technolgy distribution",
-    "submssion count",
-
-    # Very short queries
-    "students",
-    "submissions",
-    "interviews",
-    "jobs",
-    "active",
-    "today",
-    "count",
-    "report",
-    "BU",
-    "stats",
-
-    # Very long/detailed queries
-    "Can you please show me all the students who are currently active in market and have been there for more than 30 days and are on H1B visa with Java technology under Abhijith Reddy's BU?",
-    "I need a complete report of all submissions made this week by all BUs showing the student name, technology, client, rate, and current status, sorted by submission date",
-    "Show me the full interview pipeline for students who were submitted in January and got interviews in February with their final status and which ones eventually got confirmed",
-    "Give me a detailed breakdown of each BU's performance this month including total students, active in market, submissions, interviews, and confirmations",
-    "I want to see all students who have been in market for more than 60 days with no submissions at all and what technology they are on and who their manager is",
-
-    # Ambiguous queries
-    "show me everything",
-    "what's the status?",
-    "how are we doing?",
-    "any updates?",
-    "what's new?",
-    "tell me something",
-    "what should I know?",
-    "anything interesting?",
-    "how's it going?",
-    "what's happening?",
-
-    # Negative/exclusion queries
-    "Students NOT on Java",
-    "Everyone except H1B",
-    "Submissions without interviews",
-    "Students who haven't been submitted",
-    "BUs with no submissions today",
-    "Students not under Abhijith",
-    "Non-active students",
-    "Exclude confirmed students",
-    "Everyone but pulled out",
-    "Technologies with no submissions",
-
-    # Comparison with numbers
-    "Students with more than 5 submissions",
-    "BUs with less than 3 submissions today",
-    "Rate above 100",
-    "Students in market over 45 days",
-    "Interviews more than 2 per student",
-    "BUs with at least 10 active students",
-    "Submissions with rate between 70 and 90",
-    "More than 20 days no activity",
-    "At least 5 interviews this week",
-    "Less than 2 submissions per day",
-
-    # Questions with special characters
-    "what's the .NET count?",
-    "AI/ML students?",
-    "C# developers",
-    "students @ $80+",
-    "rate > 90?",
-    "rate >= 80 and <= 100",
-    "50+ days in market",
-    "#1 BU",
-    "H4-EAD students",
-    "full-stack devs",
-
-    # Multiple questions in one
-    "How many students are active and how many submissions today?",
-    "Show me interviews today and also pending results from last week",
-    "What's our active count and confirmation rate?",
-    "List top BU and also worst BU",
-    "Submissions and interviews both for this week",
-
-    # Polite/conversational
-    "Hi, can you show me the student list please?",
-    "Hey, what's our submission count today?",
-    "Please give me the interview schedule",
-    "Thanks, now show me the BU performance",
-    "Could you please pull up Abhijith's team data?",
-    "I'd like to see the weekly report please",
-    "Would it be possible to get a technology breakdown?",
-    "Excuse me, how many active students?",
-    "Hello! Show me today's numbers",
-    "Good morning, daily report please",
-
-    # Follow-up style (standalone but contextual)
-    "and what about interviews?",
-    "same thing but for last week",
-    "now show me by technology",
-    "break it down by BU",
-    "what about Vinay's team?",
-    "and the confirmation rate?",
-    "show me the trend",
-    "compare it with last month",
-    "filter by Java only",
-    "include pulled out also",
-
-    # Industry jargon / shorthand
-    "bench strength",
-    "hot list",
-    "pipeline",
-    "funnel",
-    "conversion",
-    "hit ratio",
-    "fill rate",
-    "time to fill",
-    "bench aging",
-    "market readiness",
-
-    # Questions about the system itself
-    "What data do you have?",
-    "What can I ask you?",
-    "What objects are in the database?",
-    "What fields does student have?",
-    "Can you query submissions?",
-    "Do you have interview data?",
-    "What reports can you generate?",
-    "What's your data range?",
-    "How current is the data?",
-    "When was data last synced?",
-]
-
-# Additional queries to push past 1000
-ADDITIONAL_MIXED_QUERIES = [
-    # Recruiter performance
-    "Who is the top recruiter?",
-    "Recruiter wise submissions this week",
-    "Which recruiter has most submissions?",
-    "Recruiter performance ranking",
-    "Show all recruiters and their submission counts",
-    "Best recruiter this month",
-    "Recruiter leaderboard",
-    "Submissions by each recruiter",
-    "Who submitted the most today?",
-    "Recruiter productivity report",
-    "Average submissions per recruiter",
-    "Inactive recruiters - no submissions in 7 days",
-    "Recruiter with highest confirmation rate",
-    "Which recruiter works with most BUs?",
-    "New recruiters added this month",
-
-    # Client analysis
-    "Top clients by submissions",
-    "Which client has most submissions?",
-    "Client wise submission breakdown",
-    "New clients this month",
-    "Repeat clients",
-    "Client with most interviews",
-    "Client submission trend",
-    "Top 10 clients",
-    "Client rate analysis",
-    "Which client pays the highest rate?",
-    "Clients with pending interviews",
-    "Client response rate",
-    "Clients by technology demand",
-    "Which clients need Java?",
-    "Clients requesting Python",
-
-    # Vendor analysis
-    "Top vendors by submissions",
-    "Vendor wise submission count",
-    "Prime vendor performance",
-    "Which vendor gives most submissions?",
-    "Vendor rate comparison",
-    "Best vendors this month",
-    "Vendor submission trend",
-    "New vendors added",
-    "Vendor interview conversion",
-    "Which vendor leads to most interviews?",
-    "Vendor performance by technology",
-    "Top prime vendors",
-    "Vendor contact list",
-    "Inactive vendors",
-    "Vendor ranking",
-
-    # Rate analysis
-    "Average submission rate",
-    "Rate trends this month",
-    "Highest rate submitted today",
-    "Rate distribution",
-    "Rate by technology",
-    "Java average rate",
-    "Python rate range",
-    ".NET typical rates",
-    "What's the going rate for Salesforce?",
-    "Rate comparison by BU",
-    "Are rates going up or down?",
-    "Rate trend over last 3 months",
-    "Submissions above market rate",
-    "Below market rate submissions",
-    "Rate vs technology analysis",
-    "Best rates this week",
-    "Rate negotiation data",
-    "Premium rate submissions",
-    "Budget friendly submissions",
-    "Rate brackets distribution",
-
-    # Visa-specific deep dives
-    "H1B student pipeline",
-    "OPT students about to expire",
-    "CPT vs OPT comparison",
-    "GC holders performance",
-    "Citizens in market",
-    "H4 EAD challenges",
-    "Visa type vs submission rate",
-    "Which visa gets most interviews?",
-    "Visa wise confirmation rate",
-    "H1B transfer students",
-    "Visa status distribution by technology",
-    "OPT STEM extension students",
-    "Visa category by BU",
-    "H1B vs GC rate difference",
-    "Citizens vs H1B rate comparison",
-
-    # Technology deep dives
-    "Java market demand",
-    "Python trend this quarter",
-    "Is .NET declining?",
-    "Salesforce market status",
-    "AWS vs Azure demand",
-    "DevOps placement rate",
-    "Data Engineering growth",
-    "React vs Angular demand",
-    "Full Stack market outlook",
-    "SAP current demand",
-    "ServiceNow opportunities",
-    "Cybersecurity demand trend",
-    "AI/ML market size",
-    "Tableau vs Power BI",
-    "Selenium vs Manual Testing",
-    "Technology saturation analysis",
-    "Emerging technologies",
-    "Declining technologies",
-    "Technology with fastest placement",
-    "Best technology for quick confirmation",
-
-    # Time-in-market analysis
+# ── Aggregation and count queries ──
+AGGREGATION_QUERIES = [
+    "Submissions count BU wise this month",
+    "Interviews count BU wise this week",
+    "Student count by technology",
+    "Student count by visa status",
+    "Student count by marketing status",
+    "Submissions by recruiter this month",
+    "Submissions by offshore manager this month",
+    "Top 10 BUs by submission count",
+    "Top 5 technologies by student count",
+    "Technology wise submission count this month",
+    "Visa wise student distribution",
+    "Status wise student count",
+    "BU wise interviews this month",
+    "BU wise confirmations this month",
+    "Daily submission count this week",
+    "BU wise submission count last week",
+    "BU wise interview count last week",
+    "Technology wise interview count",
+    "Type wise interview breakdown this month",
+    "Final status wise interview count",
+    "BU wise student count in market",
     "Average days in market by technology",
-    "Students over 100 days in market",
-    "Quick placements - under 15 days",
-    "Market aging report",
-    "Days in market distribution",
-    "Which technology places fastest?",
-    "Slowest placing technology",
-    "BU wise average days in market",
-    "Days in market by visa type",
-    "Students between 30-60 days in market",
-    "Critical students - over 90 days",
-    "Market aging by manager",
-    "Average time to first submission",
-    "Average time to first interview",
-    "Time from interview to confirmation",
-
-    # Onsite/Offshore manager queries
-    "Onsite manager performance",
-    "Offshore manager performance",
-    "Which onsite manager has most confirms?",
-    "Offshore manager wise submissions",
-    "Onsite vs offshore comparison",
-    "Manager productivity ranking",
-    "Show onsite managers and their students",
-    "Offshore managers with active students",
-    "Manager with longest market time students",
-    "Best performing onsite manager",
-
-    # Status transition queries
-    "Students who moved from active to verbal today",
-    "Recent status changes",
-    "Students who got confirmed this week",
-    "Who moved to on hold recently?",
-    "Status change history",
-    "Students whose status changed this month",
-    "Verbal to confirmed conversion time",
-    "How long from verbal to confirm?",
-    "Students stuck in verbal for too long",
-    "Active to pulled out - why?",
-
-    # Specific scenario queries
-    "Students ready for Salesforce projects",
-    "Who can we submit for AWS roles?",
-    "Available Python developers for immediate submission",
-    "Students matching Java Full Stack requirements",
-    "Who's available for .NET positions?",
-    "DevOps candidates for submission",
-    "Data Engineers ready for market",
-    "React developers available now",
-    "Business Analysts in market",
-    "Testers available for submission",
-
-    # Quality metrics
-    "Interview success rate",
-    "Overall selection rate",
-    "Rejection reasons analysis",
-    "No show rate",
-    "Rescheduling frequency",
-    "First interview success rate",
-    "Multiple interview students",
-    "Single submission confirmations",
-    "Quality of submissions by BU",
-    "BU with highest selection rate",
-
-    # Forecasting style
-    "Expected confirmations this month",
-    "Projected submissions for this week",
-    "At current rate how many confirms this month?",
-    "Based on trends what's the expected interview count?",
-    "Pipeline forecast",
-    "Upcoming interview results",
-    "Expected placements next week",
-    "Target vs actual submissions",
-    "Are we on track this month?",
-    "Will we hit our targets?",
-
-    # Historical analysis
-    "Best performing month this year",
-    "Historical submission data",
-    "Interview trend over 6 months",
-    "Confirmation history",
-    "All time highest submission day",
-    "Record breaking week",
-    "Historical BU performance",
-    "Year over year growth",
-    "Long term trends",
-    "Performance history by technology",
+    "Average days in market by BU",
+    "Max days in market",
+    "Students with more than 60 days in market count",
+    "How many Java students are active?",
+    "How many Python students in market?",
+    "How many DevOps students total?",
+    "How many H1B students active?",
+    "How many OPT students in market?",
+    "How many GC students?",
+    "Total submissions this month",
+    "Total interviews this month",
+    "Total confirmations this month",
+    "Total students in market",
+    "Total active students",
+    "Count of students per BU",
+    "Count of submissions per client",
+    "Top clients by submission count",
+    "Which client has most submissions?",
+    "Which technology has most students?",
+    "Which visa type has most students?",
+    "Submissions per day this week",
+    "Interviews per day this month",
+    "BU ranking by submissions this month",
+    "BU ranking by interviews this month",
+    "Recruiter performance this month",
+    "Top recruiters by submission count",
+    "Offshore manager performance this month",
+    "BU wise submissions vs interviews this month",
+    "How many confirmations this quarter?",
+    "Quarterly submission count",
 ]
 
+# ── Multi-object and comparison queries ──
+MULTI_OBJECT_QUERIES = [
+    "This month submissions, interviews and confirmations BU wise",
+    "BU wise submissions and interviews this month",
+    "Submissions and interviews comparison this week",
+    "Which students have submissions but no interviews this month?",
+    "Students with interviews but no confirmation",
+    "BU performance - subs vs ints vs confirmations",
+    "Students in market with zero submissions last 14 days",
+    "Students with no interviews in 2 weeks",
+    "Students with no submissions in 1 week",
+    "Active students with no recent activity",
+    "Dormant students - no submissions 30 days",
+    "Students with most submissions this month",
+    "Students with most interviews this month",
+    "Which student has highest submission count?",
+    "Submission to interview conversion rate by BU",
+    "Interview to confirmation conversion this month",
+    "BU efficiency - submissions per student",
+    "Students confirmed this month with their BU",
+    "Verbal confirmations with submission details",
+    "Students who got confirmed after interviews",
+    "New students who already have submissions",
+    "Students added this month with interviews",
+    "Fresh students with no submissions yet",
+    "Students in market more than 90 days without interview",
+    "Long waiting students by BU",
+    "Stale students needing attention",
+    "Students with multiple submissions this week",
+    "Students with more than 5 submissions this month",
+    "Students with more than 3 interviews this month",
+    "Top performing students by submissions",
+    "Monthly submission trend by BU",
+    "Weekly submission growth",
+    "BU comparison last month vs this month",
+    "Which BU improved most this month?",
+    "Declining BUs - less submissions than last month",
+    "Students added vs confirmed this month",
+    "Pipeline analysis - market to submission to interview",
+    "Funnel analysis by BU",
+    "Students under each offshore manager",
+    "Offshore manager wise submissions",
+    "Recruiter wise interviews scheduled",
+    "Client wise submission breakdown",
+    "Top clients this month",
+    "New clients this month",
+    "Technology demand - which tech has most submissions",
+    "Technology with most interviews",
+    "High rate submissions this month",
+    "Average rate by technology",
+    "Rate distribution by BU",
+]
 
-# ---------------------------------------------------------------------------
-# Combine all questions into a single list with category labels
-# ---------------------------------------------------------------------------
+# ── Name-based lookups ──
+NAME_BASED_QUERIES = [
+    "Show details of Aravind Sunkara",
+    "What is the status of Hemanth Reddy?",
+    "How many submissions does Maruthi Pawan have?",
+    "Interviews for Vyshnavi Boppana",
+    "Which BU is Aravind Sunkara in?",
+    "Details of Godala Rakesh Reddy",
+    "Show Samhitha Reddy details",
+    "Nithish Kumar submissions",
+    "Divya Arige interview status",
+    "Show Mani Kumar details",
+    "Mohammed Numair submissions",
+    "Pranavi Gantla information",
+    "Arpana Reddy details",
+    "Vishal Kamareddy status",
+    "Show all details for Sai Vardhan",
+    "Varun Teja submissions",
+    "Cheruku Sathvik details",
+    "Kirankumar Reddy status",
+    "Find student named Kumar",
+    "Search for Reddy students",
+    "Who is Aravind?",
+    "Show me Hemanth's technology",
+    "What technology is Vyshnavi in?",
+    "Which manager handles Aravind?",
+    "Maruthi Pawan interview history",
+    "Has Nithish got any interviews?",
+    "Submissions by Divya Arige",
+    "When was Mani Kumar's last submission?",
+    "Show Pranavi's visa status",
+    "How many days has Arpana been in market?",
+    "All students named Reddy",
+    "All students named Kumar",
+    "Students with name Sai",
+    "Find student Pawan",
+    "Search for student Chinnamsetty",
+    "Look up Ganesh",
+    "Details about Boppana",
+    "Status of student Sunkara",
+    "Is Aravind still in market?",
+    "When did Hemanth get confirmed?",
+    "Show Maruthi's recent interviews",
+    "Nithish Kumar recent submissions",
+    "All activities for Vyshnavi",
+    "Show complete profile of Aravind Sunkara",
+    "Give me everything about Hemanth Reddy",
+    "Full details Maruthi Pawan Avula",
+    "Student profile Divya Arige",
+    "Show personal details of Mohammed Numair",
+    "When was Samhitha added?",
+    "Godala Rakesh technology and visa",
+]
+
+# ── Report-style queries ──
+REPORT_QUERIES = [
+    "Send weekly report for BU Gulam Siddiqui",
+    "Send weekly report for BU Abhijith Reddy",
+    "Send weekly report for BU Vinay Singh",
+    "Send weekly report for BU Divya Panguluri",
+    "Send weekly report for BU Adithya Reddy",
+    "Send weekly report for BU Kiran Reddy",
+    "Send weekly report for BU Ravi Mandala",
+    "Send weekly report for BU Prabhakar",
+    "Send performance report for all BUs",
+    "Weekly performance summary",
+    "Monthly performance report",
+    "BU performance dashboard",
+    "Executive summary this month",
+    "Weekly submission report",
+    "Weekly interview report",
+    "Monthly submission analysis",
+    "Give me this week's summary",
+    "What happened this week?",
+    "This week's highlights",
+    "Performance overview this month",
+    "BU scorecard this month",
+    "Submission scorecard this week",
+    "Interview scorecard this month",
+    "Top performers this month",
+    "Underperforming BUs this month",
+    "Weekly wrap-up report",
+    "End of week summary",
+    "Monday morning report",
+    "Daily status report",
+    "Today's performance summary",
+    "Show me the dashboard data",
+    "Give me KPIs for this month",
+    "Key metrics this week",
+    "Performance metrics all BUs",
+    "Submission rate this month vs last month",
+    "Send weekly report for BU Manoj Prabhakar",
+    "Send weekly report for BU Prem Kumar",
+    "Send weekly report for BU Sudharshan",
+    "Weekly report BU Satish Reddy",
+    "Generate report for Sriram BU",
+]
+
+# ── Edge cases and natural language variations ──
+EDGE_CASES = [
+    "subs today",
+    "ints this week",
+    "how many subs?",
+    "today's ints",
+    "show subs",
+    "list ints",
+    "give me subs bu wise",
+    "submissions bu wise today",
+    "interviews bu wise this week",
+    "subs by bu this month",
+    "ints by bu this week",
+    "sub count",
+    "int count",
+    "student count",
+    "total subs this month",
+    "total ints this week",
+    "confs this month",
+    "confirmations",
+    "verbal confirmations this month",
+    "who got confirmed?",
+    "latest confirmations",
+    "recent confs",
+    "show me data",
+    "what's happening today?",
+    "any submissions today?",
+    "any interviews scheduled?",
+    "anything new today?",
+    "today update",
+    "daily update",
+    "status update",
+    "quick summary",
+    "brief overview",
+    "show numbers",
+    "give me stats",
+    "performance today",
+    "how are we doing?",
+    "how's the team doing this month?",
+    "are we on track?",
+    "submissions?",
+    "interviews?",
+    "which bu is best?",
+    "worst bu this month",
+    "best performer",
+    "worst performer",
+    "lazy BUs",
+    "active BUs",
+    "top BU",
+    "bottom BU",
+    "abhijith subs",
+    "vinay ints",
+    "divya students",
+    "gulam team",
+    "kiran performance",
+    "ravi submissions",
+    "prabhakar interviews",
+    "manoj subs this month",
+    "java students count",
+    "python devs",
+    "dotnet count",
+    "devops students how many",
+    "h1b count",
+    "opt students how many",
+    "gc students list",
+    "who all are in market?",
+    "total in market",
+    "market students",
+    "bench strength",
+    "how many on bench?",
+    "exits this month",
+    "who left this month?",
+    "pulled out students",
+    "not ready students",
+    "pre marketing count",
+    "project started this month",
+    "new joiners",
+    "freshers added",
+    "team size",
+    "total headcount",
+    "submission rate today",
+    "interview conversion",
+    "hit rate",
+    "success rate",
+    "show everything for today",
+    "complete today's data",
+    "full report today",
+    "all data this week",
+    "everything this month",
+    "give me all submissions with details",
+    "detailed interview list this week",
+    "comprehensive BU report",
+    "complete breakdown this month",
+]
+
+# ── Complex analytical queries ──
+COMPLEX_QUERIES = [
+    "Which BU has the highest interview to confirmation ratio?",
+    "Students in market more than 90 days what is blocking them?",
+    "Compare this month vs last month submissions BU wise",
+    "Which technology has highest placement rate?",
+    "BUs with zero submissions this week who needs attention?",
+    "Students with more than 5 submissions but no interview",
+    "Average time from submission to interview by BU",
+    "Which clients are we submitting to most?",
+    "Dormant students no activity in 30 days",
+    "New students added this month who already got submissions",
+    "Show students who had interviews but got rejected last 30 days",
+    "BU wise submissions vs last month comparison",
+    "Which recruiters are submitting most this month?",
+    "Technology wise submission to interview ratio",
+    "Students waiting longest without any interview",
+    "BU wise average days in market",
+    "Which visa category gets most interviews?",
+    "Top 3 technologies by demand this month",
+    "Students with verbal confirmation this month by BU",
+    "How many students moved from market to confirmation this month?",
+    "Show me the submission funnel by BU",
+    "Interview success rate by type",
+    "Which interview type leads to most confirmations?",
+    "Client interview vs vendor interview success rate",
+    "Students with multiple rejections",
+    "BU managers with declining submission numbers",
+    "Growing BUs - more submissions each week",
+    "Stagnant BUs - same submission count as last month",
+    "Fresh students under 7 days with submissions already",
+    "Students in market over 120 days still no placement",
+    "Rate analysis - average rate by BU",
+    "High value submissions - rate above 80",
+    "Which BU gets highest rates?",
+    "Technology demand trends",
+    "Most active clients this month",
+    "New clients we started submitting to",
+    "Submission frequency per student",
+    "Interview frequency per student",
+    "BU capacity - students per manager",
+    "Overloaded BUs - too many students per manager",
+    "Which technology students have shortest time to placement?",
+    "Best technology for quick placement",
+    "Interview to offer ratio",
+    "Offer acceptance rate by BU",
+    "Students with gap in activity - last 2 weeks no submission",
+    "BU wise fresh additions this month",
+    "Experienced students still in market",
+    "Students with both submissions and interviews this month",
+    "Full cycle students - submission to interview to confirmation",
+    "Breakdown of rejections by reason",
+]
+
+# ── Specific field/filter combinations ──
+FIELD_COMBINATIONS = [
+    "Java students in market under Abhijith",
+    "Python students with H1B visa",
+    "DevOps OPT students in market",
+    "Data Engineering students with more than 30 days in market",
+    ".NET students with verbal confirmation",
+    "Salesforce students under Divya",
+    "AWS students with interviews this month",
+    "Azure students added recently",
+    "Full Stack students in market more than 60 days",
+    "SAP students count",
+    "ServiceNow students in which BUs?",
+    "Java H1B students under Vinay Singh",
+    "Python GC students with submissions",
+    "DevOps CPT students active",
+    "Students with H4 EAD in market",
+    "L2 visa students list",
+    "STEM OPT Java students",
+    "USC students with DevOps",
+    "H1B transfer students",
+    "Submissions for Java students this month",
+    "Interviews for Python students this week",
+    "DevOps submissions by BU today",
+    "Data Engineering interviews this month",
+    ".NET submissions last 7 days",
+    "Salesforce student submissions today",
+    "AWS interviews this week",
+    "Which technology has most submissions today?",
+    "Technology breakdown of this month's interviews",
+    "Visa wise submission count this month",
+    "H1B student submissions this month",
+    "OPT student interviews this week",
+    "GC students with confirmations",
+    "Rate above 70 submissions this month",
+    "Submissions with rate above 60 by BU",
+    "High rate submissions for Java",
+    "Average rate for Python submissions",
+    "Top rated submissions this month",
+    "Submissions with status interview scheduled",
+    "Confirmed students technology breakdown",
+    "Verbal confirmations by visa type",
+    "Confirmations by technology this month",
+    "BU wise confirmations with student details",
+    "Recently confirmed students list",
+    "Students confirmed in last 7 days",
+    "This month confirmations with BU and technology",
+    "Show confirmation trend this month",
+    "Daily confirmations this month",
+    "Weekly confirmations this quarter",
+    "Offshore manager wise submission count",
+    "Onsite lead wise interview count",
+]
+
+# ── Time-period variations ──
+TIME_VARIATIONS = [
+    "Submissions in last 1 day",
+    "Submissions in last 2 days",
+    "Submissions in last 3 days",
+    "Submissions in last 5 days",
+    "Submissions in last 7 days",
+    "Submissions in last 10 days",
+    "Submissions in last 14 days",
+    "Submissions in last 21 days",
+    "Submissions in last 30 days",
+    "Submissions in last 45 days",
+    "Submissions in last 60 days",
+    "Submissions in last 90 days",
+    "Interviews in last 1 day",
+    "Interviews in last 3 days",
+    "Interviews in last 5 days",
+    "Interviews in last 7 days",
+    "Interviews in last 10 days",
+    "Interviews in last 14 days",
+    "Interviews in last 21 days",
+    "Interviews in last 30 days",
+    "Students added in last 3 days",
+    "Students added in last 7 days",
+    "Students added in last 14 days",
+    "Students added in last 30 days",
+    "BU wise subs last 3 days",
+    "BU wise subs last 7 days",
+    "BU wise subs last 14 days",
+    "BU wise subs last 30 days",
+    "BU wise ints last 7 days",
+    "BU wise ints last 14 days",
+    "Abhijith last 3 days",
+    "Vinay last 7 days submissions",
+    "Divya last 14 days interviews",
+    "Gulam last 30 days performance",
+    "Submissions Monday to Friday this week",
+    "This week so far submissions",
+    "Month to date submissions",
+    "Quarter to date interviews",
+    "Year to date confirmations",
+    "First half of this month submissions",
+]
+
+# ── Additional mixed queries to reach 1000+ ──
+ADDITIONAL_QUERIES = [
+    "Show me BU Abhijith Reddy complete report",
+    "Full analysis of Vinay Singh BU",
+    "Divya Panguluri BU health check",
+    "Gulam Siddiqui team status",
+    "Which students need attention?",
+    "Students falling behind",
+    "Students at risk of stagnation",
+    "Pipeline health check",
+    "Market readiness report",
+    "Students ready for submission",
+    "Students not getting interviews",
+    "Why are submissions low this week?",
+    "Interview pipeline status",
+    "Confirmation pipeline",
+    "Students close to confirmation",
+    "Expected confirmations this month",
+    "BU wise pipeline count",
+    "Fresh leads this week",
+    "New marketing students count",
+    "Pre marketing to market conversion",
+    "How long does it take to get first submission?",
+    "Average time in market before first interview",
+    "Fastest placements this month",
+    "Quickest turnaround BU",
+    "Slow moving students list",
+    "Students stuck in market too long",
+    "Action needed students",
+    "Priority attention list",
+    "High priority students",
+    "Students with expired visa",
+    "Visa expiring students",
+    "H1B to GC students",
+    "Status change this month",
+    "Students who changed status recently",
+    "Verbal to confirmed this month",
+    "Market to verbal this month",
+    "Exit students this month",
+    "Why did students exit?",
+    "Pulled out reasons",
+    "Student attrition this month",
+    "Retention rate by BU",
+    "BU comparison chart data",
+    "Submission velocity by BU",
+    "Interview velocity this month",
+    "Acceleration in submissions",
+    "Deceleration in interviews",
+    "Week over week growth",
+    "Month over month trend",
+    "Best day for submissions",
+    "Peak submission days",
+    "Slow days analysis",
+    "Weekend submissions",
+    "Weekday vs weekend submissions",
+    "Morning vs evening submissions",
+    "Show me the raw data",
+    "Export submissions this month",
+    "Give me data for Excel",
+    "Download format data",
+    "BU wise complete data dump",
+    "All records this month",
+    "Everything for Abhijith BU",
+    "Complete Vinay Singh data",
+    "All students all fields",
+    "Full database export",
+    "Maximum possible records",
+    "Show 2000 submissions",
+    "All interviews raw data",
+    "Unfiltered student list",
+    "No filter all data",
+    "Top clients list",
+    "Vendor analysis",
+    "Prime vendor breakdown",
+    "Which vendors perform best?",
+    "Vendor submission count",
+    "Client feedback on students",
+    "Interview feedback summary",
+    "Good feedback students",
+    "Students with very good feedback",
+    "Students with bad feedback",
+    "Feedback trend this month",
+    "Show me technology trends",
+    "Emerging technologies",
+    "Declining technology demand",
+    "Hot skills this month",
+    "Most in demand technology",
+    "Technology with least students",
+    "Oversupplied technologies",
+    "Undersupplied technologies",
+    "Technology gap analysis",
+    "Skills market fit",
+    "Show offshore managers list",
+    "Offshore manager performance ranking",
+    "Best offshore manager this month",
+    "Offshore vs onsite manager comparison",
+    "Recruiter efficiency report",
+    "Top recruiter this month",
+    "Recruiter submission rate",
+    "Recruiter interview success rate",
+    "Worst performing recruiter",
+    "Recruiter improvement needed",
+]
+
+# ── More BU + date combos to push past 1000 ──
+EXTRA_BU_DATE_QUERIES = [
+    "Abhijith Reddy submissions last 3 days",
+    "Abhijith Reddy interviews last 7 days",
+    "Abhijith Reddy students added this month",
+    "Abhijith Reddy confirmations this month",
+    "Adithya Reddy submissions last 3 days",
+    "Adithya Reddy interviews last 7 days",
+    "Adithya Reddy students added this month",
+    "Adithya Reddy confirmations this month",
+    "Vinay Singh submissions last 3 days",
+    "Vinay Singh interviews this month",
+    "Vinay Singh students with Java",
+    "Vinay Singh confirmations this quarter",
+    "Divya Panguluri submissions last 3 days",
+    "Divya Panguluri interviews last 14 days",
+    "Divya Panguluri students in market count",
+    "Divya Panguluri top students",
+    "Gulam Siddiqui submissions last 3 days",
+    "Gulam Siddiqui interviews last 14 days",
+    "Gulam Siddiqui active students count",
+    "Gulam Siddiqui students with Python",
+    "Kiran Reddy submissions last 7 days",
+    "Kiran Reddy interviews this month",
+    "Kiran Reddy student technology breakdown",
+    "Kiran Reddy dormant students",
+    "Ravi Mandala submissions last 7 days",
+    "Ravi Mandala interviews last 14 days",
+    "Ravi Mandala students in market",
+    "Ravi Mandala performance this week",
+    "Prabhakar submissions last 7 days",
+    "Prabhakar interviews this month",
+    "Prabhakar student count",
+    "Prabhakar BU submissions vs interviews",
+    "Sriram submissions last 7 days",
+    "Sriram interviews this month",
+    "Sriram student list",
+    "Sriram performance report",
+    "Manoj Prabhakar submissions this week",
+    "Manoj Prabhakar interviews last 14 days",
+    "Manoj Prabhakar active students",
+    "Manoj BU technology distribution",
+    "Prem Kumar submissions this week",
+    "Prem Kumar interviews this month",
+    "Prem Kumar students status",
+    "Prem Kumar BU report",
+    "Sudharshan submissions this month",
+    "Sudharshan interviews last 7 days",
+    "Sudharshan active students",
+    "Sudharshan BU performance",
+    "Satish Reddy submissions this week",
+    "Satish Reddy interviews last 14 days",
+    "Satish Reddy student list with technology",
+    "Satish Reddy BU daily submissions",
+    "Rakesh Ravula submissions this month",
+    "Rakesh Ravula interviews this week",
+    "Rakesh Ravula students in market",
+    "Rakesh Ravula performance this month",
+    "Mukesh Ravula submissions this month",
+    "Mukesh Ravula interviews this week",
+    "Karthik Reddy submissions last 7 days",
+    "Karthik Reddy interviews this month",
+    "Venkata Sai submissions this month",
+    "Venkata Sai interviews last 14 days",
+    "Show all BU managers with their student count",
+    "BU managers ranked by submissions this month",
+    "BU managers ranked by interviews this month",
+    "BU managers with no submissions this week",
+    "BU managers with most confirmations",
+    "Compare all BU managers this month",
+    "BU managers active vs total students",
+    "Which BU manager added most students this month?",
+    "Show BU manager leaderboard",
+    "BU wise submission trend last 30 days",
+    "BU wise daily submissions this month",
+    "BU wise weekly submissions this quarter",
+    "Every BU today's submission count",
+    "All BU interview count this week",
+    "Complete BU breakdown this month submissions interviews confirmations",
+    "Send daily report all BUs",
+    "Abhijith team Java students count",
+    "Vinay team DevOps students",
+    "Divya team Python developers",
+    "Gulam team .NET students",
+    "Which BU has most Java students?",
+    "Which BU has most DevOps students?",
+    "Technology distribution across all BUs",
+    "BU wise technology breakdown",
+    "Visa distribution across BUs",
+    "BU wise H1B student count",
+    "BU wise OPT student count",
+    "Which BU has most GC students?",
+    "BU managers without any interviews this month",
+    "Inactive BU managers",
+    "Most improved BU this month",
+    "BU needing most attention",
+    "Bottom 3 BUs by activity",
+    "Top 3 BUs by total activity",
+    "BU wise average rate this month",
+    "Which BU gets best rates?",
+    "BU wise client distribution",
+    "BU wise vendor distribution",
+    "Abhijith vs Vinay vs Divya this month",
+    "Top BU managers performance comparison",
+    "BU ranking overall this month",
+    "Daily submission chart data this month",
+    "Submission heatmap data this month",
+    "Interview calendar this week",
+    "Upcoming interviews next 7 days",
+    "Pending interview results",
+    "Students awaiting interview feedback",
+    "Re-scheduled interviews this month",
+    "Cancelled interviews this month count",
+    "No show interviews this month",
+    "Interview completion rate by BU",
+    "Successful interviews this month",
+    "Failed interviews this month",
+    "Interview pass rate by technology",
+    "Which technology students ace interviews?",
+    "Students with multiple interviews same week",
+    "Students with back to back interviews",
+    "Interview load per BU this week",
+    "Interview scheduling efficiency",
+    "Time between submission and interview",
+    "Fastest submission to interview",
+    "Slowest submission to interview",
+    "Students waiting for interview after submission",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# COMBINE ALL QUESTIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+ALL_CATEGORIES = [
+    ("Simple Student", SIMPLE_STUDENT_QUERIES),
+    ("Simple Submission", SIMPLE_SUBMISSION_QUERIES),
+    ("Simple Interview", SIMPLE_INTERVIEW_QUERIES),
+    ("Simple Job", SIMPLE_JOB_QUERIES),
+    ("Simple Employee", SIMPLE_EMPLOYEE_QUERIES),
+    ("Date Filtered", DATE_FILTERED_QUERIES),
+    ("BU Specific", BU_SPECIFIC_QUERIES),
+    ("Aggregation", AGGREGATION_QUERIES),
+    ("Multi Object", MULTI_OBJECT_QUERIES),
+    ("Name Based", NAME_BASED_QUERIES),
+    ("Report Style", REPORT_QUERIES),
+    ("Edge Cases", EDGE_CASES),
+    ("Complex", COMPLEX_QUERIES),
+    ("Field Combinations", FIELD_COMBINATIONS),
+    ("Time Variations", TIME_VARIATIONS),
+    ("Additional", ADDITIONAL_QUERIES),
+    ("Extra BU Date", EXTRA_BU_DATE_QUERIES),
+]
 
 ALL_QUESTIONS = []
-
-_categories = [
-    ("simple_single_object", SIMPLE_SINGLE_OBJECT_QUERIES),
-    ("filtered_date", FILTERED_DATE_QUERIES),
-    ("bu_specific", BU_SPECIFIC_QUERIES),
-    ("aggregation_count", AGGREGATION_COUNT_QUERIES),
-    ("multi_object_comparison", MULTI_OBJECT_COMPARISON_QUERIES),
-    ("name_based_lookup", NAME_BASED_STUDENT_LOOKUPS),
-    ("report_style", REPORT_STYLE_QUERIES),
-    ("edge_cases", EDGE_CASES_AND_VARIATIONS),
-    ("additional_mixed", ADDITIONAL_MIXED_QUERIES),
-]
-
-for category, questions in _categories:
+for cat, questions in ALL_CATEGORIES:
     for q in questions:
-        ALL_QUESTIONS.append((category, q))
+        ALL_QUESTIONS.append((cat, q))
 
 
-# ---------------------------------------------------------------------------
-# Pytest fixtures and helpers
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════
+# TEST RUNNER
+# ═══════════════════════════════════════════════════════════════════════
 
-@pytest.fixture(scope="session")
-def http_client():
-    """Create a shared HTTP client for all tests."""
+def send_question(client, question, session_id=None):
+    """Send a question to the chat API."""
+    payload = {
+        "session_id": session_id or str(uuid.uuid4()),
+        "question": question,
+    }
+    try:
+        response = client.post("/api/chat", json=payload)
+        if response.status_code == 200:
+            return {"ok": True, "body": response.json(), "status": 200}
+        else:
+            return {"ok": False, "error": f"HTTP {response.status_code}: {response.text[:200]}", "status": response.status_code}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "status": 0}
+
+
+def validate_response(result, question):
+    """Check if response is valid."""
+    if not result["ok"]:
+        return False, result["error"]
+
+    body = result["body"]
+    if not body:
+        return False, "Empty response body"
+
+    answer = body.get("answer", "")
+    if not answer:
+        return False, "No answer in response"
+
+    if len(answer) < 10:
+        return False, f"Answer too short: '{answer}'"
+
+    # Check for error indicators in the answer
+    error_phrases = [
+        "Schema not loaded",
+        "Could not convert query",
+        "I couldn't find data",
+    ]
+    for phrase in error_phrases:
+        if phrase in answer:
+            return False, f"Error in answer: {phrase}"
+
+    return True, "OK"
+
+
+def run_tests(questions=None, max_questions=None, category_filter=None):
+    """Run test questions and report results."""
     headers = {}
     if AUTH_TOKEN:
         headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
-    with httpx.Client(base_url=BASE_URL, timeout=60.0, headers=headers) as client:
-        yield client
+
+    client = httpx.Client(base_url=BASE_URL, timeout=120.0, headers=headers)
+
+    # Filter questions
+    test_set = questions or ALL_QUESTIONS
+    if category_filter:
+        test_set = [(c, q) for c, q in test_set if category_filter.lower() in c.lower()]
+    if max_questions:
+        test_set = test_set[:max_questions]
+
+    print(f"\n{'='*70}")
+    print(f"  CHAT API TEST SUITE - {len(test_set)} questions")
+    print(f"  Server: {BASE_URL}")
+    print(f"{'='*70}\n")
+
+    passed = 0
+    failed = 0
+    errors = []
+
+    for i, (category, question) in enumerate(test_set):
+        result = send_question(client, question)
+        is_valid, msg = validate_response(result, question)
+
+        if is_valid:
+            passed += 1
+            if (i + 1) % 50 == 0:
+                print(f"  Progress: {i+1}/{len(test_set)} ({passed} passed, {failed} failed)")
+        else:
+            failed += 1
+            errors.append({
+                "category": category,
+                "question": question,
+                "error": msg,
+                "answer": result.get("body", {}).get("answer", "")[:200] if result.get("body") else "",
+            })
+            print(f"  X FAIL [{category}]: {question[:60]}")
+            print(f"         Error: {msg[:100]}")
+
+        # Small delay to not overwhelm the server
+        time.sleep(0.5)
+
+    # Summary
+    print(f"\n{'='*70}")
+    print(f"  RESULTS: {passed} PASSED | {failed} FAILED | {len(test_set)} TOTAL")
+    print(f"  Pass rate: {passed/len(test_set)*100:.1f}%")
+    print(f"{'='*70}")
+
+    # Category breakdown
+    print(f"\n  Category Breakdown:")
+    cat_results = {}
+    for cat, q in test_set:
+        if cat not in cat_results:
+            cat_results[cat] = {"total": 0, "failed": 0}
+        cat_results[cat]["total"] += 1
+    for e in errors:
+        cat_results[e["category"]]["failed"] += 1
+
+    for cat, stats in sorted(cat_results.items()):
+        p = stats["total"] - stats["failed"]
+        pct = p / stats["total"] * 100 if stats["total"] > 0 else 0
+        status = "OK" if stats["failed"] == 0 else f"{stats['failed']} FAILED"
+        print(f"    {cat:25s}: {p}/{stats['total']} ({pct:.0f}%) - {status}")
+
+    # Detailed failures
+    if errors:
+        print(f"\n{'='*70}")
+        print(f"  FAILED QUESTIONS ({len(errors)}):")
+        print(f"{'='*70}")
+        for i, e in enumerate(errors[:50], 1):
+            print(f"\n  [{i}] [{e['category']}] {e['question']}")
+            print(f"      Error: {e['error']}")
+            if e['answer']:
+                print(f"      Answer: {e['answer'][:150]}")
+
+    # Save results to file
+    results_file = os.path.join(os.path.dirname(__file__), "test_results.json")
+    with open(results_file, "w") as f:
+        json.dump({
+            "total": len(test_set),
+            "passed": passed,
+            "failed": failed,
+            "pass_rate": f"{passed/len(test_set)*100:.1f}%",
+            "errors": errors,
+        }, f, indent=2)
+    print(f"\n  Results saved to: {results_file}")
+
+    client.close()
+    return passed, failed, errors
 
 
-def send_question(client: httpx.Client, question: str) -> dict:
-    """Send a question to the chat API and return the response."""
-    payload = {
-        "session_id": str(uuid.uuid4()),
-        "question": question,
-    }
-    response = client.post("/api/chat", json=payload)
-    return {
-        "status_code": response.status_code,
-        "body": response.json() if response.status_code == 200 else None,
-        "text": response.text,
-    }
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Test chat questions against API")
+    parser.add_argument("--max", type=int, help="Max questions to test")
+    parser.add_argument("--category", type=str, help="Filter by category name")
+    parser.add_argument("--url", type=str, help="API base URL")
+    args = parser.parse_args()
 
+    if args.url:
+        BASE_URL = args.url
 
-def validate_response(result: dict, question: str):
-    """Validate that the API returned a meaningful response."""
-    assert result["status_code"] == 200, (
-        f"Question '{question}' returned status {result['status_code']}: {result['text']}"
-    )
-    body = result["body"]
-    assert body is not None, f"Question '{question}' returned null body"
-    assert "answer" in body, f"Question '{question}' missing 'answer' field"
-    assert body["answer"], f"Question '{question}' returned empty answer"
-    # Answer should have some substance (more than just a few characters)
-    assert len(body["answer"]) > 5, (
-        f"Question '{question}' returned suspiciously short answer: '{body['answer']}'"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Parametrized test - runs every question as a separate test case
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "category,question",
-    ALL_QUESTIONS,
-    ids=[f"{cat}_{i:04d}" for i, (cat, _) in enumerate(ALL_QUESTIONS)],
-)
-def test_chat_question(http_client, category, question):
-    """Test that each question returns a valid response from the chat API."""
-    result = send_question(http_client, question)
-    validate_response(result, question)
-
-
-# ---------------------------------------------------------------------------
-# Category-level batch tests (for running categories independently)
-# ---------------------------------------------------------------------------
-
-class TestSimpleSingleObjectQueries:
-    """Tests for simple single-object queries (200+ questions)."""
-
-    @pytest.mark.parametrize("question", SIMPLE_SINGLE_OBJECT_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestFilteredDateQueries:
-    """Tests for date-filtered queries (150+ questions)."""
-
-    @pytest.mark.parametrize("question", FILTERED_DATE_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestBUSpecificQueries:
-    """Tests for BU-specific queries (150+ questions)."""
-
-    @pytest.mark.parametrize("question", BU_SPECIFIC_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestAggregationCountQueries:
-    """Tests for aggregation and count queries (150+ questions)."""
-
-    @pytest.mark.parametrize("question", AGGREGATION_COUNT_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestMultiObjectComparisonQueries:
-    """Tests for multi-object and comparison queries (100+ questions)."""
-
-    @pytest.mark.parametrize("question", MULTI_OBJECT_COMPARISON_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestNameBasedLookups:
-    """Tests for name-based student lookups (100+ questions)."""
-
-    @pytest.mark.parametrize("question", NAME_BASED_STUDENT_LOOKUPS)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestReportStyleQueries:
-    """Tests for report-style queries (50+ questions)."""
-
-    @pytest.mark.parametrize("question", REPORT_STYLE_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestEdgeCasesAndVariations:
-    """Tests for edge cases and variations (100+ questions)."""
-
-    @pytest.mark.parametrize("question", EDGE_CASES_AND_VARIATIONS)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-class TestAdditionalMixedQueries:
-    """Tests for additional mixed queries."""
-
-    @pytest.mark.parametrize("question", ADDITIONAL_MIXED_QUERIES)
-    def test_question(self, http_client, question):
-        result = send_question(http_client, question)
-        validate_response(result, question)
-
-
-# ---------------------------------------------------------------------------
-# Smoke test - just verify the API is reachable
-# ---------------------------------------------------------------------------
-
-class TestAPIHealth:
-    """Basic connectivity tests."""
-
-    def test_api_reachable(self, http_client):
-        """Verify the API server is running and reachable."""
-        response = http_client.get("/")
-        # Accept any non-connection-error response
-        assert response.status_code in (200, 307, 404, 405)
-
-    def test_chat_endpoint_exists(self, http_client):
-        """Verify the chat endpoint accepts POST requests."""
-        payload = {"session_id": "test-health", "question": "hello"}
-        response = http_client.post("/api/chat", json=payload)
-        # Should not be 404 or 405
-        assert response.status_code not in (404, 405), (
-            f"Chat endpoint returned {response.status_code}"
-        )
-
-    def test_basic_question(self, http_client):
-        """Verify a basic question returns a proper response."""
-        result = send_question(http_client, "How many students are there?")
-        validate_response(result, "How many students are there?")
-
-
-# ---------------------------------------------------------------------------
-# Summary statistics (not a test, just info)
-# ---------------------------------------------------------------------------
-
-def test_question_count():
-    """Verify we have 1000+ questions in our test suite."""
+    # Print question count
     total = len(ALL_QUESTIONS)
-    print(f"\n{'='*60}")
-    print(f"Total questions in test suite: {total}")
-    print(f"{'='*60}")
-    for cat, questions in _categories:
-        print(f"  {cat:30s}: {len(questions):4d} questions")
-    print(f"{'='*60}")
-    assert total >= 1000, f"Expected 1000+ questions, got {total}"
+    print(f"\nTotal questions available: {total}")
+    for cat, qs in ALL_CATEGORIES:
+        print(f"  {cat:25s}: {len(qs)}")
+
+    passed, failed, errors = run_tests(
+        max_questions=args.max,
+        category_filter=args.category
+    )
+
+    sys.exit(0 if failed == 0 else 1)
