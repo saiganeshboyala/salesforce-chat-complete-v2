@@ -98,7 +98,7 @@ async def _sync_students(session):
     logger.info("Syncing Student__c...")
     records = await _fetch_all(
         "SELECT Id, Name, Student_Marketing_Status__c, Technology__c, "
-        "Manager__c, Manager__r.Name, Phone__c, Email__c, "
+        "Manager__c, Manager__r.Name, Phone__c, "
         "Marketing_Visa_Status__c, Days_in_Market_Business__c, "
         "Last_Submission_Date__c, PreMarketingStatus__c, "
         "Verbal_Confirmation_Date__c, Project_Start_Date__c, "
@@ -123,7 +123,6 @@ async def _sync_students(session):
             manager_id=r.get("Manager__c"),
             manager_name=mgr.get("Name") if isinstance(mgr, dict) else None,
             phone=r.get("Phone__c"),
-            email=r.get("Email__c"),
             marketing_visa_status=r.get("Marketing_Visa_Status__c"),
             days_in_market=r.get("Days_in_Market_Business__c"),
             last_submission_date=_parse_sf_date(r.get("Last_Submission_Date__c")),

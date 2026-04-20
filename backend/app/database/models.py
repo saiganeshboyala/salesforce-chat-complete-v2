@@ -20,7 +20,6 @@ class Student(Base):
     manager_id = Column(String(18), index=True)
     manager_name = Column(String(255), index=True)
     phone = Column(String(50))
-    email = Column(String(255))
     marketing_visa_status = Column(String(100), index=True)
     days_in_market = Column(Float)
     last_submission_date = Column(Date)
