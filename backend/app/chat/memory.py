@@ -250,10 +250,22 @@ async def update_feedback(question, feedback):
     logger.info(f"Feedback '{feedback}' saved for: {question[:50]}")
 
 
+_STOP_WORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "for", "of", "in", "on", "at", "to", "by", "with", "from", "and",
+    "or", "but", "if", "then", "so", "as", "it", "its", "me", "my",
+    "we", "our", "i", "you", "your", "do", "does", "did", "has", "have",
+    "had", "will", "would", "can", "could", "should", "may", "might",
+}
+
+_NEGATION_WORDS = {"no", "not", "without", "zero", "none", "never", "dont", "doesn't", "isn't", "aren't"}
+
 async def find_similar_past_queries(question, top_k=5):
-    """Find similar past queries using word overlap scoring."""
+    """Find similar past queries using word overlap scoring with negation awareness."""
     await _ensure_tables()
-    q_words = set(question.lower().split())
+    q_lower = question.lower()
+    q_words = set(q_lower.split()) - _STOP_WORDS
+    q_has_negation = bool(q_words & _NEGATION_WORDS)
 
     async with async_session() as session:
         result = await session.execute(text("""
@@ -267,10 +279,16 @@ async def find_similar_past_queries(question, top_k=5):
     scored = []
     for row in rows:
         past_q, past_sql, fb = row[0], row[1], row[2]
-        past_words = set(past_q.lower().split())
+        past_words = set(past_q.lower().split()) - _STOP_WORDS
         overlap = len(q_words & past_words)
         if overlap > 0:
             boost = 2.0 if fb == "good" else (1.5 if fb == "corrected" else 1.0)
+            past_has_negation = bool(past_words & _NEGATION_WORDS)
+            past_has_not_in = "not in" in (past_sql or "").lower()
+            if q_has_negation and not past_has_negation and not past_has_not_in:
+                boost *= 0.3
+            elif not q_has_negation and (past_has_negation or past_has_not_in):
+                boost *= 0.3
             scored.append((overlap * boost, {"past_question": past_q, "past_soql": past_sql, "feedback": fb or "none"}))
 
     scored.sort(key=lambda x: -x[0])

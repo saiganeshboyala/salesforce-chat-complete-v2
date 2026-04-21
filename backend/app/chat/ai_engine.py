@@ -983,8 +983,20 @@ A: SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt, SUM(i."Amount__c") AS total_am
 Q: "monthly confirmations BU wise"
 A: SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY m."Name" ORDER BY cnt DESC LIMIT 2000
 
+NEGATION QUERIES ("no", "zero", "without", "not having"):
+- "no interviews" / "zero interviews" / "without interviews" = students NOT IN the Interviews table for that period
+- ALWAYS use NOT IN subquery: WHERE "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE ...)
+- NEVER confuse "no interviews" with "interview count" — "no interviews" means ZERO interviews, not a summary of interviews
+- When combined with "BU wise": GROUP BY the BU manager name from the Manager__c JOIN
+
 Q: "students with no interviews in 2 weeks"
 A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') LIMIT 2000
+
+Q: "last 2 weeks no interviews for students by BU wise"
+A: SELECT m."Name" AS "BU_Name", COUNT(*) AS student_count FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') GROUP BY m."Name" ORDER BY student_count DESC LIMIT 2000
+
+Q: "no submissions this week by BU"
+A: SELECT "BU_Name__c", COUNT(*) AS student_count FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('week', CURRENT_DATE)) GROUP BY "BU_Name__c" ORDER BY student_count DESC LIMIT 2000
 
 Q: "details of Sai Ganesh Chinnamsetty"
 A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c", "Phone__c", "Marketing_Email__c", "Personal_Email__c", "Marketing_Visa_Status__c", "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c", "Project_Start_Date__c" FROM "Student__c" WHERE "Name" ILIKE '%Chinnamsetty%' LIMIT 2000
