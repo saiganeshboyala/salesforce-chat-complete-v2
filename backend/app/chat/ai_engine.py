@@ -186,6 +186,92 @@ def _detect_unanswerable(question):
     return None
 
 
+# ── Layer 1d: Follow-up Resolution ────────────────────────────────
+
+_FOLLOWUP_PATTERNS = [
+    re.compile(r'^(?:and |but |also |what about |how about |now |ok |okay )', re.I),
+    re.compile(r'\b(?:same|that|those|these|them|their|they|it|its|his|her)\b', re.I),
+    re.compile(r'\b(?:instead|rather|compared|versus|vs)\b', re.I),
+    re.compile(r'\b(?:last (?:week|month|year|quarter)|this (?:week|month|year)|previous|next)\b', re.I),
+    re.compile(r'\b(?:more details|break it down|drill down|expand|elaborate)\b', re.I),
+]
+
+_STANDALONE_INDICATORS = [
+    re.compile(r'\b(?:how many|how much|count|total|list|show me|give me|get me)\b.*\b(?:students?|submissions?|interviews?|managers?|bus?|employees?)\b', re.I),
+    re.compile(r'\b(?:who|which)\b.*\b(?:students?|bus?|managers?)\b', re.I),
+]
+
+
+def _is_followup(question, conversation_history):
+    if not conversation_history or len(conversation_history) < 2:
+        return False
+    q = question.strip()
+    if len(q.split()) <= 4:
+        return True
+    for pat in _STANDALONE_INDICATORS:
+        if pat.search(q):
+            return False
+    followup_score = sum(1 for pat in _FOLLOWUP_PATTERNS if pat.search(q))
+    return followup_score >= 1
+
+
+FOLLOWUP_RESOLVE_PROMPT = """You resolve follow-up questions into standalone queries.
+
+Given the conversation history and a follow-up question, rewrite it as a complete, self-contained question
+that includes all necessary context (entity names, time ranges, filters) from the conversation.
+
+RULES:
+- Output ONLY the rewritten question, nothing else
+- Keep the user's intent exactly — don't add or remove filters
+- Include specific names, BUs, technologies, time ranges from context
+- If the follow-up asks about "them"/"those"/"it", replace with the actual entity from context
+- If the follow-up changes a time range ("what about last month"), keep everything else the same
+- If the follow-up asks for "more details" or "break it down", add "show details" or "BU wise" as appropriate
+- Never output explanations, just the rewritten question"""
+
+
+async def _resolve_followup(question, conversation_history):
+    if not _is_followup(question, conversation_history):
+        return question
+
+    ctx_parts = []
+    for msg in conversation_history[-6:]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            ctx_parts.append(f"User: {content[:200]}")
+        elif role == "assistant":
+            ctx_parts.append(f"Assistant: {content[:300]}")
+
+    prompt = f"Conversation:\n{chr(10).join(ctx_parts)}\n\nFollow-up question: {question}\n\nRewritten standalone question:"
+    resolved = await _call_ai(FOLLOWUP_RESOLVE_PROMPT, prompt, max_tokens=150, temperature=0)
+
+    if resolved and len(resolved.strip()) > 5:
+        resolved = resolved.strip().strip('"').strip("'")
+        logger.info(f"Follow-up resolved: '{question[:60]}' → '{resolved[:60]}'")
+        return resolved
+    return question
+
+
+# ── Domain Knowledge ──────────────────────────────────────────────
+
+DOMAIN_KNOWLEDGE = """
+BUSINESS CONTEXT — Staffing/Consulting Company:
+- "In Market" = student is actively being marketed to clients for placement
+- "Verbal Confirmation" (VC) = client verbally confirmed they want the student
+- "Project Started" = student started working on a client project (successful placement)
+- "Exit" = student left the program
+- "Pre Marketing" = student is in training, not yet ready for market
+- BU = Business Unit, managed by a BU Manager who oversees a team of students
+- Submissions = resumes sent to clients for job opportunities
+- Interviews = client interviews scheduled/completed for students
+- Days in Market = how long a student has been actively marketed (lower is better for placements)
+- Conversion funnel: In Market → Submissions → Interviews → Verbal Confirmation → Project Started
+- Key metrics: submission rate, interview-to-confirmation ratio, average days to placement
+- A "good" BU has high submission counts, quick placements, and low days-in-market averages
+"""
+
+
 # ── Layer 3: Fuzzy Cache Short-Circuit ─────────────────────────────
 
 async def _fuzzy_cache_lookup(question):
@@ -912,16 +998,26 @@ FIELD NAME WARNINGS (common mistakes to avoid):
 - Submissions__c."BU_Name__c" = BU manager name (text field, no JOIN needed)
 - Submissions__c."Offshore_Manager_Name__c" = offshore manager name (text field, no JOIN needed)"""
 
-ANSWER_PROMPT = """You are a data analyst for a staffing/consulting company. Give PRECISE, CONCISE answers.
+ANSWER_PROMPT = """You are a helpful data assistant for a staffing/consulting company. You answer questions conversationally, like a knowledgeable colleague.
 
-IRON RULES:
-- Use ONLY the data in QUERY RESULTS. NEVER fabricate or guess.
-- NEVER interpret or editorialize the data. Do NOT add opinions, insights, or subjective analysis.
-- NEVER use subjective words: "impressive", "concerning", "notable", "interesting", "surprisingly", "unfortunately", "good", "bad", "excellent", "poor", "alarming".
-- NEVER explain WHY numbers are high or low. Only state WHAT the numbers are.
-- NEVER predict future trends or suggest actions unless explicitly asked.
+""" + DOMAIN_KNOWLEDGE + """
+
+CORE RULES:
+- Use ONLY the data in QUERY RESULTS. NEVER fabricate or guess numbers.
+- NEVER use subjective words: "impressive", "concerning", "notable", "interesting", "surprisingly", "unfortunately", "alarming".
+- NEVER predict future trends unless explicitly asked.
 - If the data cannot answer the question, say: "The data shows [what it shows], but I cannot determine [what was asked] from this."
-- Match your response length to the question complexity:
+
+CONVERSATIONAL RULES:
+- Be direct and natural. Don't sound like a report generator.
+- For grouped/breakdown data: after the table, add 1-2 lines highlighting the highest and lowest values. Example: "Divya's BU leads with 32 submissions, while Ravi's BU has the fewest at 8."
+- For comparison questions: highlight the difference. Example: "Submissions are up 15% from last week (127 vs 110)."
+- For trend data: describe the direction factually. Example: "Submissions have increased each of the last 3 weeks."
+- For simple counts: just answer naturally. "There are **2,000 students** currently in market."
+- Don't over-explain. One insight line after grouped data is enough.
+- If conversation history is provided, reference it naturally. Example: "Following up on the BU-wise data..."
+
+RESPONSE LENGTH — match to question complexity:
   * Simple count question ("how many X?") -> ONE sentence with the number. Nothing else.
   * Breakdown question ("BU wise", "tech wise") -> A summary table. No extra detail unless asked.
   * Detail question ("show", "list", "details of") -> Table of records.
@@ -1759,8 +1855,8 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         prompt = f"Schema:\n{schema_text}\n{picklist_prompt}\n{learning}\nQuestion: {question}"
 
     if history:
-        ctx = "\n".join(f"{m['role']}: {m['content'][:200]}" for m in history[-4:])
-        prompt = f"Conversation:\n{ctx}\n\n{prompt}"
+        conv_ctx = _build_conversation_context(history)
+        prompt = f"{conv_ctx}{prompt}"
     if last_soql:
         prompt = (
             "If the user is refining a previous query, modify the PREVIOUS SQL below "
@@ -1975,6 +2071,24 @@ def _verify_answer_counts(answer, soql_result, soql_recs, question):
     return answer
 
 
+def _build_conversation_context(conversation_history):
+    if not conversation_history:
+        return ""
+    pairs = []
+    for msg in conversation_history[-8:]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            pairs.append(f"User asked: {content[:250]}")
+        elif role == "assistant":
+            lines = content.split("\n")
+            summary = "\n".join(lines[:8]) if len(lines) > 8 else content
+            pairs.append(f"You answered: {summary[:400]}")
+    if not pairs:
+        return ""
+    return "CONVERSATION HISTORY (use for context, not as data source):\n" + "\n".join(pairs) + "\n\n"
+
+
 def _is_whatsapp_report(question):
     """Detect if the user wants a WhatsApp-style formatted report."""
     q = question.lower()
@@ -1986,6 +2100,30 @@ def _is_whatsapp_report(question):
     return any(t in q for t in triggers)
 
 
+# ── Domain Question Handler ────────────────────────────────────────
+
+_DOMAIN_QA = {
+    r'\bwhat\s+(?:is|are)\s+(?:a\s+)?bu\b': "**BU (Business Unit)** is a team of students managed by a BU Manager. Each BU Manager oversees marketing, submissions, and placements for their team of students.",
+    r'\bwhat\s+(?:is|does)\s+in\s+market\s+mean': "**In Market** means a student is actively being marketed to clients for job placement. Their resume is being submitted and they're available for interviews.",
+    r'\bwhat\s+(?:is|does)\s+(?:vc|verbal\s+confirmation)\s+mean': "**Verbal Confirmation (VC)** means a client has verbally confirmed they want to hire the student. It's the stage before the official project start.",
+    r'\bwhat\s+(?:is|does)\s+project\s+started\s+mean': "**Project Started** means the student has been successfully placed and started working on a client project. This is a successful placement.",
+    r'\bwhat\s+(?:is|does)\s+pre\s*marketing\s+mean': "**Pre Marketing** means the student is still in training and not yet ready to be marketed to clients.",
+    r'\bwhat\s+(?:is|are)\s+submissions?\b': "**Submissions** are resumes sent to clients for job opportunities. Each submission represents a student's resume being forwarded to a potential employer.",
+    r'\bwhat\s+(?:is|does)\s+days?\s+in\s+market\s+mean': "**Days in Market** tracks how long a student has been actively marketed. Lower is better — it means faster placement.",
+    r'\bhow\s+(?:does|do)\s+(?:the\s+)?placement\s+(?:process\s+)?work': "The **placement funnel** works like this:\n\n1. **Pre Marketing** → Student trains\n2. **In Market** → Student is actively marketed\n3. **Submissions** → Resumes sent to clients\n4. **Interviews** → Client interviews the student\n5. **Verbal Confirmation** → Client says yes\n6. **Project Started** → Student starts working\n\nKey metrics: submission rate, interview-to-confirmation ratio, and average days to placement.",
+    r'\bwhat\s+(?:is|does)\s+exit\s+mean': "**Exit** means the student has left the program — either voluntarily or was removed. They are no longer being marketed.",
+    r'\bwhat\s+(?:statuses|status)\s+(?:are\s+there|exist|do\s+you\s+have)': "The main **student statuses** are:\n\n- **Pre Marketing** — In training\n- **In Market** — Actively being marketed\n- **Verbal Confirmation** — Client confirmed hire\n- **Project Started** — Successfully placed\n- **Exit** — Left the program",
+}
+_DOMAIN_QA_COMPILED = [(re.compile(k, re.I), v) for k, v in _DOMAIN_QA.items()]
+
+
+def _handle_domain_question(question):
+    for pattern, answer in _DOMAIN_QA_COMPILED:
+        if pattern.search(question):
+            return answer
+    return None
+
+
 # ── Main Answer Functions ────────────────────────────────────────
 
 async def answer_question(question, conversation_history=None, username=None, last_soql=None):
@@ -1993,6 +2131,16 @@ async def answer_question(question, conversation_history=None, username=None, la
     start_time = time.time()
     original_question = question
     question = _normalize_question(question)
+
+    # Layer 1a: Resolve follow-up questions using conversation context
+    question = await _resolve_followup(question, conversation_history)
+
+    # Layer 1a2: Domain knowledge questions (no DB needed)
+    domain_answer = _handle_domain_question(question)
+    if domain_answer:
+        logger.info(f"[ROUTE=DOMAIN] Q='{question[:60]}'")
+        return {"answer": domain_answer, "soql": None, "data": None, "route": "DOMAIN",
+                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
 
     # Layer 1b: Detect unanswerable questions first (why/predict/should)
     unanswerable_msg = _detect_unanswerable(question)
@@ -2293,10 +2441,8 @@ async def answer_question(question, conversation_history=None, username=None, la
     else:
         system = ANSWER_PROMPT
 
-    prompt = f"Question: {question}\n\nData:\n" + "\n".join(parts)
-    if conversation_history:
-        ctx = "\n".join(f"{m['role']}: {m['content'][:150]}" for m in conversation_history[-4:])
-        prompt = f"Conversation:\n{ctx}\n\n{prompt}"
+    conv_ctx = _build_conversation_context(conversation_history)
+    prompt = f"{conv_ctx}Question: {question}\n\nData:\n" + "\n".join(parts)
 
     answer = await _call_ai(system, prompt, max_tokens=6000)
 
@@ -2337,6 +2483,18 @@ async def answer_question_stream(question, conversation_history=None, username=N
     start_time = time.time()
     original_question = question
     question = _normalize_question(question)
+
+    # Layer 1a: Resolve follow-up questions using conversation context
+    question = await _resolve_followup(question, conversation_history)
+
+    # Layer 1a2: Domain knowledge questions (no DB needed)
+    domain_answer = _handle_domain_question(question)
+    if domain_answer:
+        logger.info(f"[ROUTE=DOMAIN] Q='{question[:60]}'")
+        yield {"type": "token", "data": domain_answer}
+        yield {"type": "done", "data": {"answer": domain_answer, "soql": None, "data": None, "route": "DOMAIN",
+               "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
+        return
 
     # Layer 1b: Detect unanswerable questions first (why/predict/should)
     unanswerable_msg = _detect_unanswerable(question)
@@ -2660,10 +2818,8 @@ async def answer_question_stream(question, conversation_history=None, username=N
     else:
         system = ANSWER_PROMPT
 
-    prompt = f"Question: {question}\n\nData:\n" + "\n".join(parts)
-    if conversation_history:
-        ctx = "\n".join(f"{m['role']}: {m['content'][:150]}" for m in conversation_history[-4:])
-        prompt = f"Conversation:\n{ctx}\n\n{prompt}"
+    conv_ctx = _build_conversation_context(conversation_history)
+    prompt = f"{conv_ctx}Question: {question}\n\nData:\n" + "\n".join(parts)
 
     collected = []
     try:
