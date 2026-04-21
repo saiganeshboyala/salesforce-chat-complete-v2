@@ -15,6 +15,7 @@ import ComparisonPage from './components/ComparisonPage'
 import AlertsPage from './components/AlertsPage'
 import NotesPage from './components/NotesPage'
 import ReportBuilder from './components/ReportBuilder'
+import WhatsAppReports from './components/WhatsAppReports'
 import AnalyticsPage from './components/AnalyticsPage'
 import { useChat } from './hooks/useChat'
 import { useToast } from './hooks/useToast'
@@ -442,6 +443,10 @@ export default function App() {
             <div className={`nav-item ${view === 'reports' ? 'active' : ''}`} onClick={() => handleNavClick('reports')}>
               {I.report} <span>Reports</span>
             </div>
+            <div className={`nav-item ${view === 'wa-reports' ? 'active' : ''}`} onClick={() => handleNavClick('wa-reports')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+              <span>WA Reports</span>
+            </div>
             <div className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => handleNavClick('analytics')}>
               {I.analytics} <span>AI Analytics</span>
             </div>
@@ -537,6 +542,8 @@ export default function App() {
           <NotesPage />
         ) : view === 'reports' ? (
           <ReportBuilder />
+        ) : view === 'wa-reports' ? (
+          <WhatsAppReports />
         ) : view === 'analytics' ? (
           <AnalyticsPage onDrillDown={handleAnalyticsDrill} />
         ) : (

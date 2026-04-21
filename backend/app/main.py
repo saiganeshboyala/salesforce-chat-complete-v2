@@ -36,6 +36,7 @@ from app import compare as compare_mod
 from app import alerts as alerts_mod
 from app import annotations as annotations_mod
 from app import reports as reports_mod
+from app import whatsapp_reports as wa_reports
 from app import analytics as analytics_mod
 from app.database.sync import init_db, run_sync, start_sync_scheduler, get_sync_status
 from app.database import analytics_sql
@@ -673,6 +674,36 @@ async def reports_suggest(req: ReportSuggestRequest, current_user=Depends(get_cu
         return await reports_mod.suggest_report(req.prompt.strip())
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+# ── WhatsApp Reports ──────────────────────────────────
+
+@app.get("/api/wa-reports")
+async def wa_reports_list(current_user=Depends(get_current_user)):
+    return {
+        "reports": [
+            {"id": k, "label": v["label"], "category": v["category"]}
+            for k, v in wa_reports.REPORT_REGISTRY.items()
+        ]
+    }
+
+
+@app.get("/api/wa-reports/{report_type}")
+async def wa_reports_download(report_type: str, current_user=Depends(get_current_user)):
+    entry = wa_reports.REPORT_REGISTRY.get(report_type)
+    if not entry:
+        raise HTTPException(404, f"Unknown report type: {report_type}")
+    try:
+        xlsx_bytes = await entry["handler"]()
+        filename = f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return StreamingResponse(
+            io.BytesIO(xlsx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as e:
+        logger.error(f"WhatsApp report error ({report_type}): {e}")
+        raise HTTPException(500, str(e))
 
 
 @app.get("/api/dashboard/widget")
