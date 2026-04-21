@@ -636,6 +636,32 @@ export default function App() {
                           {I.pencil}
                         </button>
                       )}
+                      {msg.role === 'assistant' && msg.fileDownload && (
+                        <button
+                          className="wa-download-btn"
+                          onClick={() => {
+                            const { filename, data, mime } = msg.fileDownload
+                            const bin = atob(data)
+                            const arr = new Uint8Array(bin.length)
+                            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+                            const blob = new Blob([arr], { type: mime })
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url; a.download = filename
+                            document.body.appendChild(a); a.click()
+                            document.body.removeChild(a); URL.revokeObjectURL(url)
+                          }}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            padding: '0.5rem 1rem', marginTop: '0.5rem', borderRadius: 6,
+                            border: 'none', background: '#25D366', color: '#fff',
+                            cursor: 'pointer', fontWeight: 500, fontSize: '0.85rem',
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                          Download {msg.fileDownload.filename}
+                        </button>
+                      )}
                       {msg.role === 'assistant' && !msg.isError && (
                         <>
                           {msg.data?.records?.length > 0 && <DataTable records={msg.data.records} totalSize={msg.data.totalSize} />}

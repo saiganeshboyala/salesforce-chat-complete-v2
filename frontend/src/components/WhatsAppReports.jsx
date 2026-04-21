@@ -63,7 +63,7 @@ export default function WhatsAppReports() {
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: 900, margin: '0 auto' }}>
+    <div style={{ padding: '2rem', maxWidth: 900, margin: '0 auto', height: '100%', overflowY: 'auto' }}>
       <div style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: '1.6rem' }}>📱</span> WhatsApp Reports

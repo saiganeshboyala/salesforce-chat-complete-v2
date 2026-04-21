@@ -892,6 +892,160 @@ async def last_week_performance_offshore() -> bytes:
 
 
 # ────────────────────────────────────────────────────────────
+# 11. Recruiter Last Week Performance BU-wise
+# ────────────────────────────────────────────────────────────
+
+async def recruiter_performance_bu() -> bytes:
+    sql = text("""
+        SELECT
+            m."Name" AS bu_name,
+            s."Offshore_Manager_Name__c" AS offshore_mgr,
+            s."Recruiter_Name__c" AS recruiter,
+            s."Name" AS student_name,
+            COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
+            COALESCE(s."Last_week_Interviews__c", 0) AS last_week_ints,
+            CASE WHEN s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
+                  AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('week', CURRENT_DATE)
+                 THEN 1 ELSE 0 END AS confirmed
+        FROM "Student__c" s
+        LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
+        WHERE s."Student_Marketing_Status__c" = 'In Market'
+        ORDER BY s."Recruiter_Name__c", s."Offshore_Manager_Name__c", m."Name", s."Name"
+    """)
+
+    async with async_session() as session:
+        result = await session.execute(sql)
+        rows = result.fetchall()
+
+    rec_data = {}
+    for bu_name, offshore_mgr, recruiter, student_name, subs, ints, confirmed in rows:
+        bu = bu_name or "Unknown"
+        mgr = offshore_mgr or "NAN"
+        rec = recruiter or "NAN"
+        key = (rec, mgr, bu)
+
+        if key not in rec_data:
+            rec_data[key] = {"students": [], "total_subs": 0, "total_ints": 0, "total_conf": 0, "in_market": 0}
+        rec_data[key]["total_subs"] += int(subs)
+        rec_data[key]["total_ints"] += int(ints)
+        rec_data[key]["total_conf"] += int(confirmed)
+        rec_data[key]["in_market"] += 1
+        rec_data[key]["students"].append({
+            "name": student_name or "Unknown",
+            "subs": int(subs),
+            "ints": int(ints),
+            "conf": int(confirmed),
+        })
+
+    output_rows = []
+    for (rec, mgr, bu), data in sorted(rec_data.items()):
+        im = data["in_market"]
+        lines = []
+        lines.append(f"\U0001f4ca Last Week Recruiter Report\n")
+        lines.append(f"*{rec}*")
+        lines.append(f"\U0001f9d1‍\U0001f4bc Offshore Manager: *{mgr}*")
+        lines.append(f"\U0001f3e2 BU: *{bu}*")
+        lines.append(f"\U0001f4e4 Submissions: {data['total_subs']}")
+        lines.append(f"\U0001f3a4 Interviews: {data['total_ints']}")
+        lines.append(f"\U0001f465 In Market Count: {im}")
+        lines.append(f"✅ Conformations: {data['total_conf']}")
+
+        for st in data["students"]:
+            lines.append(
+                f"\n\U0001f464 Student: *{st['name']}* | \U0001f4e4 Submissions: {st['subs']} "
+                f"| \U0001f3a4 Interviews: {st['ints']} | ✅ *Conformations:* {st['conf']}"
+            )
+
+        output_rows.append({
+            "Recruiter": rec,
+            "Offshore Manager": mgr,
+            "BU": bu,
+            "Message": "\n".join(lines),
+        })
+
+    return _xlsx_bytes(output_rows, ["Recruiter", "Offshore Manager", "BU", "Message"], "Recruiter Performance BU")
+
+
+# ────────────────────────────────────────────────────────────
+# 12. Recruiter Last Week Performance Offshore Manager-wise
+# ────────────────────────────────────────────────────────────
+
+async def recruiter_performance_offshore() -> bytes:
+    sql = text("""
+        SELECT
+            s."Offshore_Manager_Name__c" AS offshore_mgr,
+            m."Name" AS bu_name,
+            s."Recruiter_Name__c" AS recruiter,
+            s."Name" AS student_name,
+            COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
+            COALESCE(s."Last_week_Interviews__c", 0) AS last_week_ints,
+            CASE WHEN s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
+                  AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('week', CURRENT_DATE)
+                 THEN 1 ELSE 0 END AS confirmed
+        FROM "Student__c" s
+        LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
+        WHERE s."Student_Marketing_Status__c" = 'In Market'
+        ORDER BY s."Offshore_Manager_Name__c", m."Name", s."Recruiter_Name__c", s."Name"
+    """)
+
+    async with async_session() as session:
+        result = await session.execute(sql)
+        rows = result.fetchall()
+
+    mgr_data = {}
+    for offshore_mgr, bu_name, recruiter, student_name, subs, ints, confirmed in rows:
+        mgr = offshore_mgr or "NAN"
+        bu = bu_name or "Unknown"
+        rec = recruiter or "NAN"
+
+        if mgr not in mgr_data:
+            mgr_data[mgr] = {"bus": {}, "total_subs": 0, "total_ints": 0, "total_conf": 0, "in_market": 0}
+        mgr_data[mgr]["total_subs"] += int(subs)
+        mgr_data[mgr]["total_ints"] += int(ints)
+        mgr_data[mgr]["total_conf"] += int(confirmed)
+        mgr_data[mgr]["in_market"] += 1
+
+        if bu not in mgr_data[mgr]["bus"]:
+            mgr_data[mgr]["bus"][bu] = {}
+        if rec not in mgr_data[mgr]["bus"][bu]:
+            mgr_data[mgr]["bus"][bu][rec] = []
+
+        mgr_data[mgr]["bus"][bu][rec].append({
+            "name": student_name or "Unknown",
+            "subs": int(subs),
+            "ints": int(ints),
+            "conf": int(confirmed),
+        })
+
+    output_rows = []
+    for mgr, data in sorted(mgr_data.items()):
+        im = data["in_market"]
+        target = round((data["total_subs"] / (im * 2 * 5) * 100), 2) if im > 0 else 0
+        lines = []
+        lines.append(f"\U0001f4ca Last Week Report\n")
+        lines.append(f"*{mgr}*")
+        lines.append(f"\U0001f4e4 Submissions Count: {data['total_subs']}")
+        lines.append(f"\U0001f3a4 Interview Count: {data['total_ints']}")
+        lines.append(f"\U0001f465 In Market Count: {im}")
+        lines.append(f"\U0001f3af %% Target: {target}")
+        lines.append(f"✅ Conformations: {data['total_conf']}")
+
+        for bu, recruiters in sorted(data["bus"].items()):
+            lines.append(f"\n\U0001f3e2 *BU: {bu}*")
+            for rec, students in sorted(recruiters.items()):
+                lines.append(f"\U0001f465 Recruiter: *{rec}*")
+                for st in students:
+                    lines.append(
+                        f"\U0001f464 Student: *{st['name']}* | \U0001f4e4 Submissions: {st['subs']} "
+                        f"| \U0001f3a4 Interviews: {st['ints']} | ✅ *Conformations:* {st['conf']}"
+                    )
+
+        output_rows.append({"Offshore Manager Name": mgr, "Message": "\n".join(lines)})
+
+    return _xlsx_bytes(output_rows, ["Offshore Manager Name", "Message"], "Recruiter Performance OM")
+
+
+# ────────────────────────────────────────────────────────────
 # Registry — maps report_type to handler
 # ────────────────────────────────────────────────────────────
 
@@ -945,5 +1099,15 @@ REPORT_REGISTRY = {
         "label": "Last Week Submissions & Interviews Offshore Manager-wise",
         "category": "weekly",
         "handler": last_week_performance_offshore,
+    },
+    "recruiter_performance_bu": {
+        "label": "Recruiter Last Week Performance BU-wise",
+        "category": "weekly",
+        "handler": recruiter_performance_bu,
+    },
+    "recruiter_performance_offshore": {
+        "label": "Recruiter Last Week Performance Offshore Manager-wise",
+        "category": "weekly",
+        "handler": recruiter_performance_offshore,
     },
 }

@@ -2142,6 +2142,69 @@ def _handle_domain_question(question):
     return None
 
 
+# ── WhatsApp Report Detection ────────────────────────────────────
+
+_REPORT_PATTERNS = [
+    (re.compile(r'(?:generate|create|make|give|send|prepare|get)\s+(?:the\s+)?(?:whatsapp|wa|watsapp)?\s*(?:premarketing|pre\s*marketing)\s+(?:report)?\s*(?:bu|business\s*unit)', re.I), "premarketing_bu"),
+    (re.compile(r'(?:premarketing|pre\s*marketing)\s+(?:report\s+)?(?:bu|business\s*unit)\s*(?:wise|report)?', re.I), "premarketing_bu"),
+
+    (re.compile(r'(?:yesterday|yday)\s+(?:submission|sub)\s+(?:report\s+)?(?:bu|business\s*unit)', re.I), "yesterday_submissions_bu"),
+    (re.compile(r'(?:yesterday|yday)\s+(?:submission|sub)\s+(?:report\s+)?(?:offshore|off\s*shore)\s*(?:manager)?', re.I), "yesterday_submissions_offshore"),
+
+    (re.compile(r'(?:last\s+)?3\s*(?:days?)?\s+no\s+(?:submission|sub).*(?:bu|business\s*unit)', re.I), "no_submissions_3days_bu"),
+    (re.compile(r'(?:no\s+submission|without\s+submission).*(?:3\s*day|last\s*3).*(?:bu|business\s*unit)', re.I), "no_submissions_3days_bu"),
+    (re.compile(r'(?:last\s+)?3\s*(?:days?)?\s+no\s+(?:submission|sub).*(?:offshore|off\s*shore)', re.I), "no_submissions_3days_offshore"),
+    (re.compile(r'(?:no\s+submission|without\s+submission).*(?:3\s*day|last\s*3).*(?:offshore|off\s*shore)', re.I), "no_submissions_3days_offshore"),
+
+    (re.compile(r'(?:interview)\s+(?:mandatory|missing|empty)\s+(?:field|data).*(?:bu|business\s*unit)', re.I), "interview_mandatory_fields_bu"),
+
+    (re.compile(r'(?:last\s+)?2\s*(?:weeks?)?\s+no\s+(?:interview).*(?:bu|business\s*unit)', re.I), "no_interviews_2weeks_bu"),
+    (re.compile(r'(?:no\s+interview|without\s+interview).*(?:2\s*week|last\s*2).*(?:bu|business\s*unit)', re.I), "no_interviews_2weeks_bu"),
+    (re.compile(r'(?:last\s+)?2\s*(?:weeks?)?\s+no\s+(?:interview).*(?:offshore|off\s*shore)', re.I), "no_interviews_2weeks_offshore"),
+    (re.compile(r'(?:no\s+interview|without\s+interview).*(?:2\s*week|last\s*2).*(?:offshore|off\s*shore)', re.I), "no_interviews_2weeks_offshore"),
+
+    (re.compile(r'(?:last\s+week)\s+(?:submission|sub|performance).*(?:interview).*(?:bu|business\s*unit)', re.I), "last_week_performance_bu"),
+    (re.compile(r'(?:last\s+week)\s+(?:report|performance).*(?:bu|business\s*unit)', re.I), "last_week_performance_bu"),
+    (re.compile(r'(?:last\s+week)\s+(?:submission|sub|performance).*(?:interview).*(?:offshore|off\s*shore)', re.I), "last_week_performance_offshore"),
+    (re.compile(r'(?:last\s+week)\s+(?:report|performance).*(?:offshore|off\s*shore)', re.I), "last_week_performance_offshore"),
+
+    (re.compile(r'(?:recruiter)\s+(?:last\s+week|weekly)\s+(?:performance|report).*(?:bu|business\s*unit)', re.I), "recruiter_performance_bu"),
+    (re.compile(r'(?:recruiter)\s+(?:last\s+week|weekly)\s+(?:performance|report).*(?:offshore|off\s*shore)', re.I), "recruiter_performance_offshore"),
+]
+
+_REPORT_GENERIC = re.compile(
+    r'(?:generate|create|make|prepare|get|give)\s+(?:the\s+)?(?:whatsapp|wa|watsapp)\s+'
+    r'(?:report|message|msg)', re.I
+)
+
+
+async def _handle_report_request(question):
+    from app.whatsapp_reports import REPORT_REGISTRY
+    q = question.lower()
+
+    for pattern, report_type in _REPORT_PATTERNS:
+        if pattern.search(q):
+            entry = REPORT_REGISTRY.get(report_type)
+            if entry:
+                logger.info(f"[ROUTE=WA_REPORT] Detected report: {report_type}")
+                return report_type, entry["label"]
+
+    if _REPORT_GENERIC.search(q):
+        report_list = "\n".join(
+            f"- **{v['label']}** → _\"{k}\"_"
+            for k, v in REPORT_REGISTRY.items()
+        )
+        return None, (
+            "I can generate these WhatsApp reports for you:\n\n"
+            f"{report_list}\n\n"
+            "Just ask for any specific one, e.g. _\"generate premarketing report BU wise\"_ "
+            "or _\"last 3 days no submissions BU wise report\"_.\n\n"
+            "You can also download them as Excel from the **WA Reports** tab in the sidebar."
+        )
+
+    return None, None
+
+
 # ── Main Answer Functions ────────────────────────────────────────
 
 async def answer_question(question, conversation_history=None, username=None, last_soql=None):
@@ -2159,6 +2222,31 @@ async def answer_question(question, conversation_history=None, username=None, la
         logger.info(f"[ROUTE=DOMAIN] Q='{question[:60]}'")
         return {"answer": domain_answer, "soql": None, "data": None, "route": "DOMAIN",
                 "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
+
+    # Layer 1a3: WhatsApp report generation
+    report_type, report_result = await _handle_report_request(question)
+    if report_type:
+        from app.whatsapp_reports import REPORT_REGISTRY
+        entry = REPORT_REGISTRY[report_type]
+        try:
+            xlsx_bytes = await entry["handler"]()
+            import base64
+            b64 = base64.b64encode(xlsx_bytes).decode()
+            return {
+                "answer": f"**{entry['label']}** report generated successfully!\n\n"
+                          f"The Excel file is ready for download with WhatsApp-formatted messages.\n\n"
+                          f"You can also generate this anytime from the **WA Reports** tab in the sidebar.",
+                "soql": None, "data": None, "route": "WA_REPORT",
+                "file_download": {"filename": f"{report_type}.xlsx", "data": b64, "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+                "suggestions": ["Generate premarketing report BU wise", "Last 3 days no submissions BU wise", "Last 2 weeks no interviews report"],
+            }
+        except Exception as e:
+            logger.error(f"Report generation failed: {e}")
+            return {"answer": f"Report generation failed: {str(e)}\n\nYou can try downloading it from the **WA Reports** tab.",
+                    "soql": None, "data": None, "route": "ERROR"}
+    elif report_result:
+        return {"answer": report_result, "soql": None, "data": None, "route": "WA_REPORT",
+                "suggestions": ["Generate premarketing report BU wise", "Last 3 days no submissions BU wise", "Last 2 weeks no interviews report"]}
 
     # Layer 1b: Detect unanswerable questions first (why/predict/should)
     unanswerable_msg = _detect_unanswerable(question)
@@ -2512,6 +2600,39 @@ async def answer_question_stream(question, conversation_history=None, username=N
         yield {"type": "token", "data": domain_answer}
         yield {"type": "done", "data": {"answer": domain_answer, "soql": None, "data": None, "route": "DOMAIN",
                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
+        return
+
+    # Layer 1a3: WhatsApp report generation
+    report_type, report_result = await _handle_report_request(question)
+    if report_type:
+        from app.whatsapp_reports import REPORT_REGISTRY
+        entry = REPORT_REGISTRY[report_type]
+        yield {"type": "thinking", "data": f"Generating {entry['label']}..."}
+        try:
+            xlsx_bytes = await entry["handler"]()
+            import base64
+            b64 = base64.b64encode(xlsx_bytes).decode()
+            answer = (f"**{entry['label']}** report generated successfully!\n\n"
+                      f"The Excel file is ready for download with WhatsApp-formatted messages.\n\n"
+                      f"You can also generate this anytime from the **WA Reports** tab in the sidebar.")
+            yield {"type": "thinking_done", "data": None}
+            yield {"type": "token", "data": answer}
+            yield {"type": "done", "data": {
+                "answer": answer, "soql": None, "data": None, "route": "WA_REPORT",
+                "file_download": {"filename": f"{report_type}.xlsx", "data": b64, "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+                "suggestions": ["Generate premarketing report BU wise", "Last 3 days no submissions BU wise", "Last 2 weeks no interviews report"],
+            }}
+        except Exception as e:
+            logger.error(f"Report generation failed (stream): {e}")
+            msg = f"Report generation failed: {str(e)}\n\nYou can try downloading it from the **WA Reports** tab."
+            yield {"type": "thinking_done", "data": None}
+            yield {"type": "token", "data": msg}
+            yield {"type": "done", "data": {"answer": msg, "soql": None, "data": None, "route": "ERROR"}}
+        return
+    elif report_result:
+        yield {"type": "token", "data": report_result}
+        yield {"type": "done", "data": {"answer": report_result, "soql": None, "data": None, "route": "WA_REPORT",
+               "suggestions": ["Generate premarketing report BU wise", "Last 3 days no submissions BU wise", "Last 2 weeks no interviews report"]}}
         return
 
     # Layer 1b: Detect unanswerable questions first (why/predict/should)

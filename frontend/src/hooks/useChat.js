@@ -16,6 +16,7 @@ function normalizeMessage(m) {
     suggestions: m.suggestions || [],
     ts: m.ts ? new Date(m.ts) : new Date(),
     isError: m.isError,
+    fileDownload: m.fileDownload || null,
   }
 }
 
@@ -136,6 +137,7 @@ export function useChat(onSessionChanged) {
                 if (evt.data.soql) finalSoql = evt.data.soql
                 if (evt.data.data) finalData = evt.data.data
                 if (evt.data.suggestions) finalSuggestions = evt.data.suggestions
+                if (evt.data.file_download) applyPatch({ fileDownload: evt.data.file_download })
               }
               break
             default:
