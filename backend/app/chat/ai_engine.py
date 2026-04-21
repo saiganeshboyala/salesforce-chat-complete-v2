@@ -206,11 +206,15 @@ def _is_followup(question, conversation_history):
     if not conversation_history or len(conversation_history) < 2:
         return False
     q = question.strip()
-    if len(q.split()) <= 4:
-        return True
     for pat in _STANDALONE_INDICATORS:
         if pat.search(q):
             return False
+    if len(q.split()) <= 4:
+        has_entity = bool(re.search(r'\b(?:students?|submissions?|interviews?|managers?|employees?|bus?|jobs?)\b', q, re.I))
+        has_action = bool(re.search(r'\b(?:how many|count|total|list|show|give)\b', q, re.I))
+        if has_entity and has_action:
+            return False
+        return True
     followup_score = sum(1 for pat in _FOLLOWUP_PATTERNS if pat.search(q))
     return followup_score >= 1
 
@@ -222,10 +226,12 @@ that includes all necessary context (entity names, time ranges, filters) from th
 
 RULES:
 - Output ONLY the rewritten question, nothing else
-- Keep the user's intent exactly — don't add or remove filters
-- Include specific names, BUs, technologies, time ranges from context
+- PRESERVE ALL filters from the previous query unless the user explicitly changes them
+- If previous query had a BU filter, time range, status, or technology — keep them ALL
+- Only change the specific thing the user asked to change
 - If the follow-up asks about "them"/"those"/"it", replace with the actual entity from context
 - If the follow-up changes a time range ("what about last month"), keep everything else the same
+- If the follow-up says "same for Java", change ONLY the technology — keep BU, time range, status filters
 - If the follow-up asks for "more details" or "break it down", add "show details" or "BU wise" as appropriate
 - Never output explanations, just the rewritten question"""
 
