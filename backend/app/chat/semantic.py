@@ -259,10 +259,17 @@ def _detect_status(q):
             return val
     return None
 
+_SHORT_TECH_KEYWORDS = {"de ", "ba ", "cs "}
+
 def _detect_tech(q):
+    words = q.split()
     for val, keywords in _TECH_KEYWORDS:
         for kw in keywords:
-            if kw in q:
+            if kw in _SHORT_TECH_KEYWORDS:
+                short = kw.strip()
+                if short in words:
+                    return val
+            elif kw in q:
                 return val
     return None
 
@@ -919,6 +926,12 @@ async def handle_semantic_query(question):
           .replace("intrvw", "interview").replace("interivew", "interview")
           .replace("  ", " "))
 
+    # ── Skip non-data questions (let AI handle explanatory/conceptual questions) ──
+    if re.search(r'\b(?:what (?:is|are) the|explain|define|meaning of|difference between|how does|why do|tell me about the|what do you mean)\b', q):
+        if not any(w in q for w in ["how many", "how much", "show", "list", "count",
+                                     "give me", "get me", "fetch", "display", "total"]):
+            return None
+
     # ── Message generation ──────────────────────────────────
     if _is_message_request(q):
         return await _handle_message_generation(q, question)
@@ -1331,6 +1344,24 @@ async def _handle_average(entity, ent, q, wheres, where_sql, needs_bu_join):
             answer = f"**Average days in market by {'Technology' if 'technology' in q else 'BU'}:**"
         return _make_result(answer, sql, recs)
 
+    if any(w in q for w in ["interview amount", "interview details", "amounts for each",
+                              "amount per student", "amounts per student", "amounts for student",
+                              "interview data for each", "interview info for each"]):
+        int_ent = ENTITIES["interviews"]
+        bu_filter = f' AND m."Name" ILIKE \'%{bu_name}%\'' if bu_name else ""
+        time_filter = f' AND i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end}' if time_start else ""
+        sql = (f'SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", '
+               f'i."Type__c", i."Final_Status__c", i."Amount__c", i."Bill_Rate__c", '
+               f'i."Interview_Date1__c" '
+               f'FROM {int_ent["from_clause"]}'
+               f' WHERE i."Amount__c" IS NOT NULL{bu_filter}{time_filter}'
+               f' ORDER BY s."Name" LIMIT 2000')
+        recs, _ = await _run(sql)
+        if recs is None:
+            return None
+        answer = f"**{len(recs):,} interviews with amounts**{desc}."
+        return _make_result(answer, sql, recs)
+
     if entity in ("submissions", "interviews") and any(w in q for w in ["rate", "amount"]):
         if entity == "submissions":
             sql = f'SELECT ROUND(AVG("Rate__c"), 2) AS avg_rate FROM "Submissions__c"{where_sql}'
@@ -1640,7 +1671,7 @@ async def _handle_bu_full_report(q, bu_name, time_start, time_end, time_label):
                 f'GROUP BY "BU_Name__c" ORDER BY "Submissions" DESC')
 
     sql_ints = (f'SELECT m."Name" AS "BU_Name", COUNT(*) AS "Interviews", '
-                f'SUM(CASE WHEN i."Final_Status__c" = \'Confirmed\' THEN 1 ELSE 0 END) AS "Confirmations", '
+                f'SUM(CASE WHEN i."Final_Status__c" IN (\'Confirmation\', \'Expecting Confirmation\') THEN 1 ELSE 0 END) AS "Confirmations", '
                 f'COALESCE(SUM(i."Amount__c"), 0) AS "Interview_Amount" '
                 f'FROM "Interviews__c" i '
                 f'LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" '
