@@ -112,6 +112,11 @@ REPORT_PATTERNS = [
             """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Verbal_Confirmation_Date__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
         ],
         "labels": ["Monthly Submissions", "Monthly Interviews", "Monthly Confirmations"],
+        "summary_queries": [
+            ("""SELECT "BU_Name__c" AS "BU_Name", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} AND "BU_Name__c" IS NOT NULL GROUP BY "BU_Name__c" ORDER BY cnt DESC""", "_summary_Monthly Submissions"),
+            ("""SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt, SUM(CASE WHEN i."Final_Status__c" IN ('Confirmation', 'Expecting Confirmation', 'Verbal Confirmation') THEN 1 ELSE 0 END) AS conf_cnt, COALESCE(SUM(i."Amount__c"), 0) AS total_amount FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} AND m."Name" IS NOT NULL GROUP BY m."Name" ORDER BY cnt DESC""", "_summary_Monthly Interviews"),
+            ("""SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} AND m."Name" IS NOT NULL GROUP BY m."Name" ORDER BY cnt DESC""", "_summary_Monthly Confirmations"),
+        ],
     },
     {
         "keywords": ["last week sub", "last week int", "weekly sub", "weekly int", "last week submission", "last week interview"],
@@ -339,9 +344,18 @@ def _match_report_pattern(question):
             label = labels[i] if i < len(labels) else f"Query {i+1}"
             resolved.append((sql, label))
 
+        resolved_summaries = []
+        for sq_template, sq_label in pattern.get("summary_queries", []):
+            sq = sq_template
+            if time_start:
+                sq = sq.replace("{time_start}", time_start).replace("{time_end}", time_end)
+            if name_val:
+                sq = sq.replace("{name}", name_val)
+            resolved_summaries.append((sq, sq_label))
+
         if resolved:
             logger.info(f"Report pattern matched: {labels[0] if labels else 'unknown'} ({len(resolved)} queries)")
-            return {"queries": resolved, "whatsapp": pattern.get("whatsapp_format", False), "name": name_val}
+            return {"queries": resolved, "summary_queries": resolved_summaries, "whatsapp": pattern.get("whatsapp_format", False), "name": name_val}
 
     return None
 
@@ -1163,6 +1177,11 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
             else:
                 queries_str, combined_result, combined_recs = await _execute_multi_query(pattern_queries)
                 if combined_recs is not None:
+                    summary_queries = pattern_match.get("summary_queries", [])
+                    if summary_queries:
+                        _, _, summary_recs = await _execute_multi_query(summary_queries)
+                        if summary_recs:
+                            combined_recs.extend(summary_recs)
                     return queries_str, combined_result, combined_recs
 
     learning = await get_learning_examples_prompt(question)
@@ -1428,49 +1447,99 @@ async def answer_question(question, conversation_history=None, username=None, la
         if labels:
             parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSQL used:\n{soql_query}")
 
-            # Pre-compute BU-wise summary for the AI
-            bu_summary = {}
-            for label in sorted(labels):
-                group = [r for r in soql_recs if r.get("_query_label") == label]
-                clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
+            # Separate summary records from detail records
+            summary_labels = {l for l in labels if l.startswith("_summary_")}
+            detail_labels = labels - summary_labels
 
-                # Count by BU for this query type
-                bu_field = None
-                for f in ["BU_Name__c", "BU_Name", "BU_Manager"]:
-                    if clean and f in clean[0]:
-                        bu_field = f
-                        break
-                if bu_field:
-                    for rec in clean:
-                        bu = rec.get(bu_field, "Unknown")
+            # Build BU summary from aggregate queries if available
+            bu_summary = {}
+            if summary_labels:
+                for slabel in sorted(summary_labels):
+                    display_label = slabel.replace("_summary_", "")
+                    group = [r for r in soql_recs if r.get("_query_label") == slabel]
+                    for rec in group:
+                        bu = rec.get("BU_Name", "Unknown")
                         if bu not in bu_summary:
                             bu_summary[bu] = {}
-                        bu_summary[bu][label] = bu_summary[bu].get(label, 0) + 1
-                        # Sum amounts if present
-                        for amt_field in ["Amount__c", "total_amount"]:
-                            if amt_field in rec and rec[amt_field]:
-                                amt_key = f"{label}_amount"
-                                bu_summary[bu][amt_key] = bu_summary[bu].get(amt_key, 0) + float(rec[amt_field] or 0)
+                        bu_summary[bu][display_label] = rec.get("cnt", 0)
+                        if "conf_cnt" in rec:
+                            bu_summary[bu][display_label + "_confirmations"] = rec.get("conf_cnt", 0)
+                        if "total_amount" in rec:
+                            bu_summary[bu][display_label + "_amount"] = float(rec.get("total_amount", 0) or 0)
+            else:
+                # Fallback: count from raw records (less accurate if LIMIT hit)
+                for label in sorted(detail_labels):
+                    group = [r for r in soql_recs if r.get("_query_label") == label]
+                    clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
+                    bu_field = None
+                    for f in ["BU_Name__c", "BU_Name", "BU_Manager"]:
+                        if clean and f in clean[0]:
+                            bu_field = f
+                            break
+                    if bu_field:
+                        for rec in clean:
+                            bu = rec.get(bu_field, "Unknown")
+                            if bu not in bu_summary:
+                                bu_summary[bu] = {}
+                            bu_summary[bu][label] = bu_summary[bu].get(label, 0) + 1
+                            for amt_field in ["Amount__c", "total_amount"]:
+                                if amt_field in rec and rec[amt_field]:
+                                    amt_key = f"{label}_amount"
+                                    bu_summary[bu][amt_key] = bu_summary[bu].get(amt_key, 0) + float(rec[amt_field] or 0)
 
+            # Append detail record samples (not summaries)
+            for label in sorted(detail_labels):
+                group = [r for r in soql_recs if r.get("_query_label") == label]
+                clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
                 parts.append(f"\n--- {label} ({len(group)} records) ---")
                 parts.append(json.dumps(clean[:100], indent=2, default=str)[:20000])
 
             # Add pre-computed summary table
             if bu_summary:
+                # Determine columns for the summary table
+                has_confirmations = any(k.endswith("_confirmations") for bu_data in bu_summary.values() for k in bu_data)
+                has_amount = any(k.endswith("_amount") for bu_data in bu_summary.values() for k in bu_data)
+                display_cols = sorted(detail_labels) if detail_labels else sorted({l.replace("_summary_", "") for l in summary_labels})
+
                 parts.append("\n\nPRE-COMPUTED BU SUMMARY (use these EXACT numbers in your answer):")
-                parts.append("| BU Name | " + " | ".join(sorted(labels)) + " |")
-                parts.append("|---|" + "|".join(["---"] * len(labels)) + "|")
-                totals = {l: 0 for l in labels}
+                header = "| BU Name | " + " | ".join(display_cols)
+                if has_confirmations:
+                    header += " | Confirmations"
+                if has_amount:
+                    header += " | Interview Amount"
+                parts.append(header + " |")
+                sep = "|---|" + "|".join(["---"] * len(display_cols))
+                if has_confirmations:
+                    sep += "|---"
+                if has_amount:
+                    sep += "|---"
+                parts.append(sep + "|")
+
+                totals = {l: 0 for l in display_cols}
+                total_conf = 0
+                total_amt = 0.0
                 for bu in sorted(bu_summary.keys()):
                     row = f"| {bu}"
-                    for l in sorted(labels):
+                    for l in display_cols:
                         cnt = bu_summary[bu].get(l, 0)
                         totals[l] += cnt
                         row += f" | {cnt}"
+                    if has_confirmations:
+                        conf = sum(v for k, v in bu_summary[bu].items() if k.endswith("_confirmations"))
+                        total_conf += conf
+                        row += f" | {conf}"
+                    if has_amount:
+                        amt = sum(v for k, v in bu_summary[bu].items() if k.endswith("_amount"))
+                        total_amt += amt
+                        row += f" | {amt:,.2f}"
                     parts.append(row + " |")
                 total_row = "| **Total**"
-                for l in sorted(labels):
+                for l in display_cols:
                     total_row += f" | **{totals[l]}**"
+                if has_confirmations:
+                    total_row += f" | **{total_conf}**"
+                if has_amount:
+                    total_row += f" | **{total_amt:,.2f}**"
                 parts.append(total_row + " |")
         else:
             if is_limited:
@@ -1539,7 +1608,7 @@ async def answer_question(question, conversation_history=None, username=None, la
         "suggestions": suggestions,
         "data": {
             "totalSize": soql_result.get("totalSize", 0) if soql_result and "error" not in soql_result else 0,
-            "records": (soql_recs or [])[:200],
+            "records": [r for r in (soql_recs or []) if not str(r.get("_query_label", "")).startswith("_summary_")][:200],
             "query": soql_query,
             "route": route,
             "rag_results": len(rag_results) if rag_results else 0,
@@ -1642,7 +1711,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
     if soql_recs or rag_results:
         data_payload = {
             "totalSize": soql_result.get("totalSize", 0) if soql_result and "error" not in soql_result else 0,
-            "records": (soql_recs or [])[:200],
+            "records": [r for r in (soql_recs or []) if not str(r.get("_query_label", "")).startswith("_summary_")][:200],
             "query": soql_query,
             "route": route,
             "rag_results": len(rag_results) if rag_results else 0,
@@ -1659,11 +1728,94 @@ async def answer_question_stream(question, conversation_history=None, username=N
         labels = set(r.get("_query_label") for r in soql_recs if "_query_label" in r)
         if labels:
             parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSQL used:\n{soql_query}")
-            for label in sorted(labels):
+
+            summary_labels = {l for l in labels if l.startswith("_summary_")}
+            detail_labels = labels - summary_labels
+
+            bu_summary = {}
+            if summary_labels:
+                for slabel in sorted(summary_labels):
+                    display_label = slabel.replace("_summary_", "")
+                    group = [r for r in soql_recs if r.get("_query_label") == slabel]
+                    for rec in group:
+                        bu = rec.get("BU_Name", "Unknown")
+                        if bu not in bu_summary:
+                            bu_summary[bu] = {}
+                        bu_summary[bu][display_label] = rec.get("cnt", 0)
+                        if "conf_cnt" in rec:
+                            bu_summary[bu][display_label + "_confirmations"] = rec.get("conf_cnt", 0)
+                        if "total_amount" in rec:
+                            bu_summary[bu][display_label + "_amount"] = float(rec.get("total_amount", 0) or 0)
+            else:
+                for label in sorted(detail_labels):
+                    group = [r for r in soql_recs if r.get("_query_label") == label]
+                    clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
+                    bu_field = None
+                    for f in ["BU_Name__c", "BU_Name", "BU_Manager"]:
+                        if clean and f in clean[0]:
+                            bu_field = f
+                            break
+                    if bu_field:
+                        for rec in clean:
+                            bu = rec.get(bu_field, "Unknown")
+                            if bu not in bu_summary:
+                                bu_summary[bu] = {}
+                            bu_summary[bu][label] = bu_summary[bu].get(label, 0) + 1
+                            for amt_field in ["Amount__c", "total_amount"]:
+                                if amt_field in rec and rec[amt_field]:
+                                    amt_key = f"{label}_amount"
+                                    bu_summary[bu][amt_key] = bu_summary[bu].get(amt_key, 0) + float(rec[amt_field] or 0)
+
+            for label in sorted(detail_labels):
                 group = [r for r in soql_recs if r.get("_query_label") == label]
                 clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
                 parts.append(f"\n--- {label} ({len(group)} records) ---")
                 parts.append(json.dumps(clean[:100], indent=2, default=str)[:20000])
+
+            if bu_summary:
+                has_confirmations = any(k.endswith("_confirmations") for bu_data in bu_summary.values() for k in bu_data)
+                has_amount = any(k.endswith("_amount") for bu_data in bu_summary.values() for k in bu_data)
+                display_cols = sorted(detail_labels) if detail_labels else sorted({l.replace("_summary_", "") for l in summary_labels})
+
+                parts.append("\n\nPRE-COMPUTED BU SUMMARY (use these EXACT numbers in your answer):")
+                header = "| BU Name | " + " | ".join(display_cols)
+                if has_confirmations:
+                    header += " | Confirmations"
+                if has_amount:
+                    header += " | Interview Amount"
+                parts.append(header + " |")
+                sep = "|---|" + "|".join(["---"] * len(display_cols))
+                if has_confirmations:
+                    sep += "|---"
+                if has_amount:
+                    sep += "|---"
+                parts.append(sep + "|")
+                totals = {l: 0 for l in display_cols}
+                total_conf = 0
+                total_amt = 0.0
+                for bu in sorted(bu_summary.keys()):
+                    row = f"| {bu}"
+                    for l in display_cols:
+                        cnt = bu_summary[bu].get(l, 0)
+                        totals[l] += cnt
+                        row += f" | {cnt}"
+                    if has_confirmations:
+                        conf = sum(v for k, v in bu_summary[bu].items() if k.endswith("_confirmations"))
+                        total_conf += conf
+                        row += f" | {conf}"
+                    if has_amount:
+                        amt = sum(v for k, v in bu_summary[bu].items() if k.endswith("_amount"))
+                        total_amt += amt
+                        row += f" | {amt:,.2f}"
+                    parts.append(row + " |")
+                total_row = "| **Total**"
+                for l in display_cols:
+                    total_row += f" | **{totals[l]}**"
+                if has_confirmations:
+                    total_row += f" | **{total_conf}**"
+                if has_amount:
+                    total_row += f" | **{total_amt:,.2f}**"
+                parts.append(total_row + " |")
         else:
             if is_limited:
                 parts.append(f"QUERY RESULTS: **{total} TOTAL records** in database (showing {shown} below, but the TRUE TOTAL is {total}).\nIMPORTANT: Use {total} as the total count, NOT {shown}.\nSQL used: {soql_query}")

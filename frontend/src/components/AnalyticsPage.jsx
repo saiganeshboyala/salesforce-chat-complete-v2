@@ -129,13 +129,27 @@ function LineCard({ card, onDrill }) {
 function TableCard({ data, onDrill }) {
   if (!data?.length) return null
   const cols = Object.keys(data[0]).filter(k => k !== 'drilldown')
+  const formatHeader = (c) => c.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())
+  const formatCell = (c, val) => {
+    if (val == null) return '\u2014'
+    if (typeof val !== 'number') return val
+    if (c === 'amount' || c === 'expense' || c === 'placementCost') return '$' + val.toLocaleString()
+    return val.toLocaleString()
+  }
+  const totals = {}
+  cols.forEach(c => {
+    if (typeof data[0]?.[c] === 'number') {
+      totals[c] = data.reduce((sum, r) => sum + (r[c] || 0), 0)
+    }
+  })
+  const hasTotals = Object.keys(totals).length > 0
   return (
     <div className="analytics-table-scroll">
       <table className="data-table">
         <thead>
           <tr>
             {cols.map(c => (
-              <th key={c}>{c.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}</th>
+              <th key={c}>{formatHeader(c)}</th>
             ))}
           </tr>
         </thead>
@@ -143,10 +157,19 @@ function TableCard({ data, onDrill }) {
           {data.map((r, i) => (
             <tr key={i} className="analytics-clickable" onClick={() => r.drilldown && onDrill(r.drilldown)}>
               {cols.map(c => (
-                <td key={c}>{typeof r[c] === 'number' ? r[c].toLocaleString() : r[c] ?? '\u2014'}</td>
+                <td key={c} style={typeof r[c] === 'number' ? { textAlign: 'right' } : {}}>{formatCell(c, r[c])}</td>
               ))}
             </tr>
           ))}
+          {hasTotals && (
+            <tr style={{ fontWeight: 'bold', borderTop: '2px solid var(--border)' }}>
+              {cols.map(c => (
+                <td key={c} style={totals[c] != null ? { textAlign: 'right' } : {}}>
+                  {totals[c] != null ? formatCell(c, totals[c]) : (c === cols[0] ? 'Total' : '')}
+                </td>
+              ))}
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
@@ -155,7 +178,7 @@ function TableCard({ data, onDrill }) {
 
 function AnalyticsCard({ card, onDrill }) {
   return (
-    <div className={`analytics-card ${card.chartType === 'line' ? 'analytics-card-wide' : ''}`}>
+    <div className={`analytics-card ${(card.chartType === 'line' || card.chartType === 'table') ? 'analytics-card-wide' : ''}`}>
       <div className="analytics-card-header">
         <h3 className="analytics-card-title">{card.title}</h3>
         {card.metric && card.chartType !== 'metric' && (

@@ -83,34 +83,56 @@ async def compute_analytics():
         "data": tech_main,
     })
 
-    # 3. BU Submissions This Month (top 15, rest grouped as Others)
-    bu_records = await _query(
-        'SELECT "BU_Name__c", COUNT(*) AS cnt FROM "Submissions__c" '
+    # 3. Monthly BU-wise Report: Submissions, Interviews, Confirmations, Amount
+    bu_subs = await _query(
+        'SELECT "BU_Name__c" AS bu, COUNT(*) AS subs FROM "Submissions__c" '
         'WHERE "Submission_Date__c" >= DATE_TRUNC(\'month\', CURRENT_DATE) '
         'AND "BU_Name__c" IS NOT NULL '
-        'GROUP BY "BU_Name__c" ORDER BY cnt DESC'
+        'GROUP BY "BU_Name__c"'
     )
-    bu_all = [
-        {"name": r["BU_Name__c"], "value": r["cnt"],
-         "drilldown": f"Show all submissions this month for BU {r['BU_Name__c']}"}
-        for r in bu_records
-    ]
-    top_n = 15
-    if len(bu_all) > top_n:
-        bu_top = bu_all[:top_n]
-        others_count = sum(d["value"] for d in bu_all[top_n:])
-        if others_count > 0:
-            bu_top.append({"name": "Others", "value": others_count, "drilldown": "Show all submissions this month by BU"})
-        bu_sub_data = bu_top
-    else:
-        bu_sub_data = bu_all
-    total_subs = sum(d["value"] for d in bu_all)
+    bu_ints = await _query(
+        'SELECT m."Name" AS bu, COUNT(*) AS ints, '
+        'SUM(CASE WHEN i."Final_Status__c" IN (\'Confirmation\', \'Expecting Confirmation\', \'Verbal Confirmation\') THEN 1 ELSE 0 END) AS confs, '
+        'COALESCE(SUM(i."Amount__c"), 0) AS amount '
+        'FROM "Interviews__c" i '
+        'LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" '
+        'LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+        'WHERE i."Interview_Date1__c" >= DATE_TRUNC(\'month\', CURRENT_DATE) '
+        'AND m."Name" IS NOT NULL '
+        'GROUP BY m."Name"'
+    )
+    bu_sub_map = {r["bu"]: r["subs"] for r in bu_subs}
+    bu_int_map = {r["bu"]: r for r in bu_ints}
+    all_bus = sorted(set(list(bu_sub_map.keys()) + list(bu_int_map.keys())))
+
+    bu_report_data = []
+    total_s, total_i, total_c, total_a = 0, 0, 0, 0
+    for bu in all_bus:
+        subs = bu_sub_map.get(bu, 0)
+        int_r = bu_int_map.get(bu, {})
+        ints = int_r.get("ints", 0) if isinstance(int_r, dict) else 0
+        confs = int_r.get("confs", 0) if isinstance(int_r, dict) else 0
+        amount = round(int_r.get("amount", 0) if isinstance(int_r, dict) else 0)
+        total_s += subs
+        total_i += ints
+        total_c += confs
+        total_a += amount
+        bu_report_data.append({
+            "name": bu,
+            "submissions": subs,
+            "interviews": ints,
+            "confirmations": confs,
+            "amount": amount,
+            "drilldown": f"Show monthly submissions and interviews for BU {bu}",
+        })
+    bu_report_data.sort(key=lambda x: x["submissions"] + x["interviews"], reverse=True)
+
     cards.append({
-        "id": "bu_submissions",
-        "title": "Submissions This Month by BU",
-        "description": f"{total_subs:,} submissions across {len(bu_all)} BUs",
-        "chartType": "bar",
-        "data": bu_sub_data,
+        "id": "bu_monthly_report",
+        "title": "Monthly BU Report — Submissions, Interviews, Confirmations & Amount",
+        "description": f"{total_s:,} subs, {total_i:,} interviews, {total_c:,} confirmations, ${total_a:,} amount across {len(bu_report_data)} BUs",
+        "chartType": "table",
+        "data": bu_report_data,
     })
 
     # 4. Interview Outcomes This Month
