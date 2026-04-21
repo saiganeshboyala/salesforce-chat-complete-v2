@@ -482,7 +482,7 @@ export default function ReportBuilder() {
         <div className="rb-header">
           <div>
             <h2>Report Builder</h2>
-            <p className="muted">Build, preview, and save Salesforce reports with drag-and-drop fields.</p>
+            <p className="muted">Build, preview, and save reports with drag-and-drop fields.</p>
           </div>
           <div className="rb-header-actions">
             <button className="btn-secondary" onClick={preview} disabled={running || !config.object}>

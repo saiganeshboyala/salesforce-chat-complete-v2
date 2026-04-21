@@ -119,7 +119,7 @@ export default function SchedulesPage() {
 
                 {isExpanded && (
                   <div className="schedule-card-body">
-                    <div className="schedule-detail-row"><strong>SOQL:</strong> <code>{s.soql}</code></div>
+                    <div className="schedule-detail-row"><strong>SQL:</strong> <code>{s.soql}</code></div>
                     {s.question && <div className="schedule-detail-row"><strong>Question:</strong> {s.question}</div>}
                     <div className="schedule-detail-row"><strong>Recipients:</strong> {s.recipients?.length ? s.recipients.join(', ') : '(none)'}</div>
                     <div className="schedule-detail-row"><strong>Last run:</strong> {fmtDate(s.last_run)} {s.last_row_count != null && `(${s.last_row_count} rows)`}</div>

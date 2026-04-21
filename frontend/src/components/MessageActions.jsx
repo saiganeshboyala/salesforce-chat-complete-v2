@@ -117,7 +117,7 @@ export default function MessageActions({ message }) {
               </button>
               <button type="button" onClick={() => handleDownload('xlsx')} disabled={!downloadQuery}>
                 <span className="download-menu-title">Excel (.xlsx)</span>
-                <span className="download-menu-sub">{downloadQuery ? 'Formatted workbook' : 'Requires a SOQL query'}</span>
+                <span className="download-menu-sub">{downloadQuery ? 'Formatted workbook' : 'Requires a SQL query'}</span>
               </button>
             </div>
           )}

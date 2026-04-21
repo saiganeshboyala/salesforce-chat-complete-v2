@@ -1,4 +1,4 @@
-"""Per-user report builder — save, run, and AI-suggest Salesforce reports."""
+"""Per-user report builder — save, run, and AI-suggest reports."""
 import json
 import logging
 import re
@@ -370,7 +370,7 @@ async def suggest_report(prompt: str) -> dict:
         raise ValueError("schema not available")
 
     system = (
-        "You are a Salesforce report builder assistant. Given a user's goal and a schema "
+        "You are a report builder assistant. Given a user's goal and a schema "
         "summary, return a JSON report configuration. ONLY return valid JSON, no prose. "
         "Schema:\n" + _schema_summary() +
         "\n\nOperators: equals, not_equals, greater_than, less_than, greater_equals, "

@@ -42,7 +42,7 @@ from app.database import analytics_sql
 from app.connectors import gmail as gmail_conn
 from app.connectors import google_oauth as google_oauth
 from app.salesforce.schema import get_schema, discover_schema, get_relationships
-from app.salesforce.soql_executor import execute_soql
+from app.database.query import execute_query
 from app.auth_users import (
     authenticate_user, create_token, get_current_user, get_optional_user,
     create_user, list_users, delete_user, change_password, decode_token,
@@ -92,7 +92,7 @@ async def lifespan(app):
         except Exception as e:
             logger.error(f"Schema discovery failed: {e}")
     chat_engine = ChatEngine()
-    logger.info(f"Ready — {len(get_schema())} objects | Auth + SOQL + RAG + Learning")
+    logger.info(f"Ready — {len(get_schema())} objects | Auth + SQL + RAG + Learning")
     start_scheduler()
     sched.start_runner()
     # Initialize PostgreSQL and start sync
@@ -128,10 +128,10 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
-_SOQL_WRITE_RE = re.compile(r"\b(INSERT|UPDATE|DELETE|UPSERT|MERGE|UNDELETE)\b", re.IGNORECASE)
+_SQL_WRITE_RE = re.compile(r"\b(INSERT|UPDATE|DELETE|UPSERT|MERGE|UNDELETE|DROP|ALTER|TRUNCATE)\b", re.IGNORECASE)
 
-def _assert_read_only_soql(soql: str):
-    if _SOQL_WRITE_RE.search(soql):
+def _assert_read_only_sql(sql: str):
+    if _SQL_WRITE_RE.search(sql):
         raise HTTPException(400, "Only SELECT queries are allowed")
 
 
@@ -181,7 +181,7 @@ async def register(req: RegisterRequest, current_user=Depends(get_current_user))
 
 @app.get("/api/auth/me")
 async def me(current_user=Depends(get_current_user)):
-    stats = get_user_stats(current_user["username"])
+    stats = await get_user_stats(current_user["username"])
     return {**current_user, **stats}
 
 @app.post("/api/auth/change-password")
@@ -293,7 +293,7 @@ class FeedbackRequest(BaseModel):
 
 @app.post("/api/feedback")
 async def feedback(req: FeedbackRequest, request: Request, user=Depends(get_optional_user)):
-    update_feedback(req.question, req.feedback)
+    await update_feedback(req.question, req.feedback)
     await audit.log_action(
         (user or {}).get("username"),
         "feedback",
@@ -304,14 +304,14 @@ async def feedback(req: FeedbackRequest, request: Request, user=Depends(get_opti
 
 @app.get("/api/learning-stats")
 async def learning_stats():
-    return memory_stats()
+    return await memory_stats()
 
 
 # ── User History ───────────────────────────────────────
 
 @app.get("/api/history")
 async def history(current_user=Depends(get_current_user)):
-    return get_user_history(current_user["username"])
+    return await get_user_history(current_user["username"])
 
 
 # ── Chat Sessions ──────────────────────────────────────
@@ -677,10 +677,10 @@ async def reports_suggest(req: ReportSuggestRequest, current_user=Depends(get_cu
 
 @app.get("/api/dashboard/widget")
 async def dashboard_widget(q: str = Query(...), current_user=Depends(get_current_user)):
-    """Execute a single widget's SOQL and return its data."""
-    _assert_read_only_soql(q)
+    """Execute a single widget's SQL and return its data."""
+    _assert_read_only_sql(q)
     try:
-        result = await execute_soql(q)
+        result = await execute_query(q)
         if "error" in result:
             raise HTTPException(400, result["error"])
         for r in result.get("records", []):
@@ -695,19 +695,19 @@ async def dashboard_widget(q: str = Query(...), current_user=Depends(get_current
 @app.get("/api/dashboard")
 async def dashboard():
     queries = {
-        "total_students": "SELECT COUNT() FROM Student__c",
-        "students_in_market": "SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'In Market'",
-        "verbal_confirmations": "SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation'",
-        "project_started": "SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'Project Started'",
-        "exits": "SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'Exit'",
-        "total_accounts": "SELECT COUNT() FROM Account",
-        "total_contacts": "SELECT COUNT() FROM Contact",
-        "status_breakdown": "SELECT Student_Marketing_Status__c, COUNT(Id) cnt FROM Student__c GROUP BY Student_Marketing_Status__c ORDER BY COUNT(Id) DESC",
+        "total_students": 'SELECT COUNT(*) AS cnt FROM "Student__c"',
+        "students_in_market": """SELECT COUNT(*) AS cnt FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market'""",
+        "verbal_confirmations": """SELECT COUNT(*) AS cnt FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'Verbal Confirmation'""",
+        "project_started": """SELECT COUNT(*) AS cnt FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'Project Started'""",
+        "exits": """SELECT COUNT(*) AS cnt FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'Exit'""",
+        "total_accounts": 'SELECT COUNT(*) AS cnt FROM "Account"',
+        "total_contacts": 'SELECT COUNT(*) AS cnt FROM "Contact"',
+        "status_breakdown": """SELECT "Student_Marketing_Status__c", COUNT(*) AS cnt FROM "Student__c" GROUP BY "Student_Marketing_Status__c" ORDER BY COUNT(*) DESC""",
     }
     metrics = {}
-    for key, soql in queries.items():
+    for key, sql in queries.items():
         try:
-            result = await execute_soql(soql)
+            result = await execute_query(sql)
             if "error" not in result:
                 if key == "status_breakdown":
                     records = result.get("records", [])
@@ -715,7 +715,11 @@ async def dashboard():
                         r.pop("attributes", None)
                     metrics[key] = records
                 else:
-                    metrics[key] = result.get("totalSize", 0)
+                    recs = result.get("records", [])
+                    if recs and "cnt" in recs[0]:
+                        metrics[key] = recs[0]["cnt"]
+                    else:
+                        metrics[key] = result.get("totalSize", 0)
         except Exception:
             metrics[key] = 0
     return metrics
@@ -788,7 +792,7 @@ async def export_pdf(req: PdfExportRequest, request: Request, user=Depends(get_o
             request.client.host if request.client else "",
         )
         pdf_bytes = build_pdf(
-            title=req.title or "Salesforce Data Report",
+            title=req.title or "Fyxo Data Report",
             question=req.question or "",
             answer=req.answer or "",
             soql=req.soql,
@@ -809,12 +813,12 @@ async def export_pdf(req: PdfExportRequest, request: Request, user=Depends(get_o
 
 @app.get("/api/export")
 async def export_data(q: str = Query(...), format: str = Query("csv"), current_user=Depends(get_current_user)):
-    _assert_read_only_soql(q)
+    _assert_read_only_sql(q)
     fmt = (format or "csv").lower()
     if fmt not in ("csv", "xlsx"):
         raise HTTPException(400, "format must be csv or xlsx")
     try:
-        result = await execute_soql(q)
+        result = await execute_query(q)
         if "error" in result:
             raise HTTPException(400, result["error"])
         records = result.get("records", [])
@@ -992,7 +996,7 @@ async def health():
     if settings.anthropic_api_key: providers.append(f"Claude ({settings.claude_model})")
     if settings.grok_api_key: providers.append(f"Grok ({settings.grok_model})")
     if settings.openai_api_key: providers.append(f"OpenAI ({settings.openai_model})")
-    return {"status": "healthy", "mode": "hybrid_soql_rag_learning_auth", "objects": len(schema), "ai_providers": providers, "learning": memory_stats()}
+    return {"status": "healthy", "mode": "hybrid_soql_rag_learning_auth", "objects": len(schema), "ai_providers": providers, "learning": await memory_stats()}
 
 @app.post("/api/refresh-schema")
 async def refresh_schema():
@@ -1143,7 +1147,7 @@ async def analytics_predictive(current_user=Depends(get_current_user)):
     try:
         return await analytics_sql.compute_analytics()
     except Exception as e:
-        logger.warning(f"PostgreSQL analytics failed, falling back to SOQL: {e}")
+        logger.warning(f"PostgreSQL analytics failed: {e}")
         try:
             return await analytics_mod.compute_analytics()
         except Exception as e2:
@@ -1177,7 +1181,7 @@ class AnalyticsRequest(BaseModel):
 @app.post("/api/analytics/generate")
 async def analytics_generate(req: AnalyticsRequest, request: Request, current_user=Depends(get_current_user)):
     """
-    AI-powered analytics: takes a natural language prompt, generates SOQL,
+    AI-powered analytics: takes a natural language prompt, generates SQL,
     runs it, then asks Claude to produce insight cards with chart configs.
     """
     if not chat_engine:
@@ -1189,24 +1193,24 @@ async def analytics_generate(req: AnalyticsRequest, request: Request, current_us
 
     schema_text = schema_to_prompt(get_schema())
 
-    system_prompt = f"""You are a Salesforce data analyst for a staffing/consulting company.
+    system_prompt = f"""You are a PostgreSQL data analyst for a staffing/consulting company.
 Given the user's analytics request, generate a JSON array of analytics cards.
 
-KEY OBJECTS & FIELDS:
-- Student__c: Name, Student_Marketing_Status__c (picklist: 'In Market','Pre Marketing','Verbal Confirmation','Exit','In Job'), Technology__c, Manager__c (ref→Manager__c), Days_in_Market_Business__c, Last_Submission_Date__c, Verbal_Confirmation_Date__c, Phone__c, Email__c, Marketing_Visa_Status__c
-- Submissions__c: Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c, Recruiter_Name__c
-- Interviews__c: Student__c (ref→Student__c), Onsite_Manager__c, Type__c, Final_Status__c (picklist: 'Good','Very Good','Average','Very Bad','Cancelled','Re-Scheduled','Confirmation','Expecting Confirmation','N/A'), Amount__c, Bill_Rate__c, Interview_Date__c
-- Manager__c: Name, Active__c, Total_Expenses_MIS__c, Each_Placement_Cost__c, Students_Count__c, In_Market_Students_Count__c, Verbal_Count__c
-- Job__c: Student__c, Share_With__c (ref→Manager__c), PayRate__c, Bill_Rate__c, Active__c
+CRITICAL: All table and column names MUST be double-quoted (case-sensitive PostgreSQL).
+Use PostgreSQL date functions: CURRENT_DATE, DATE_TRUNC(), INTERVAL. NEVER use SOQL date literals.
+Use LEFT JOIN for cross-table queries.
 
-CROSS-OBJECT: Student__c.Manager__r.Name, Interviews__c.Student__r.Name, Job__c.Share_With__r.Name
+KEY TABLES & FIELDS:
+- "Student__c": "Name", "Student_Marketing_Status__c", "Technology__c", "Manager__c" (FK→Manager__c), "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c"
+- "Submissions__c": "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c", "Offshore_Manager_Name__c", "Recruiter_Name__c"
+- "Interviews__c": "Student__c" (FK→Student__c), "Onsite_Manager__c", "Type__c", "Final_Status__c", "Amount__c", "Bill_Rate__c", "Interview_Date__c"
+- "Manager__c": "Name", "Active__c", "Total_Expenses_MIS__c", "Each_Placement_Cost__c", "Students_Count__c"
+- "Job__c": "Student__c", "Share_With__c" (FK→Manager__c), "PayRate__c", "Bill_Rate__c", "Active__c"
 
 COMMON QUERIES:
-- Students in market: SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'In Market'
-- Verbal confirmations: SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation'
-- Status distribution: SELECT Student_Marketing_Status__c, COUNT(Id) cnt FROM Student__c GROUP BY Student_Marketing_Status__c
-- Submissions by BU: SELECT BU_Name__c, COUNT(Id) cnt FROM Submissions__c WHERE Submission_Date__c = THIS_MONTH GROUP BY BU_Name__c
-- Interview status: SELECT Final_Status__c, COUNT(Id) cnt FROM Interviews__c GROUP BY Final_Status__c
+- Students in market: SELECT COUNT(*) AS cnt FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market'
+- Status distribution: SELECT "Student_Marketing_Status__c", COUNT(*) AS cnt FROM "Student__c" GROUP BY "Student_Marketing_Status__c"
+- Submissions by BU: SELECT "BU_Name__c", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) GROUP BY "BU_Name__c"
 
 Full schema:
 {schema_text[:6000]}
@@ -1217,16 +1221,16 @@ Return ONLY valid JSON array. Each card:
   "soql": "SELECT ... FROM ...",
   "chartType": "bar" | "pie" | "line" | "metric" | "table",
   "description": "One-line description",
-  "xKey": "field for x-axis (for bar/line, use the GROUP BY field)",
-  "yKey": "field for y-axis value (for bar/line, use the alias like 'cnt')",
-  "labelKey": "field for pie labels (the GROUP BY field)",
-  "valueKey": "field for pie values (the alias like 'cnt')"
+  "xKey": "field for x-axis",
+  "yKey": "field for y-axis value",
+  "labelKey": "field for pie labels",
+  "valueKey": "field for pie values"
 }}
 
 RULES:
-- For "metric" cards: use SELECT COUNT() FROM ... — the totalSize in the result IS the count.
-- For chart cards: use GROUP BY with COUNT(Id) aliased as cnt. Set xKey/labelKey to the grouped field and yKey/valueKey to 'cnt'.
-- Use EXACT picklist values shown above (e.g. 'In Market' not 'in_market').
+- For "metric" cards: use SELECT COUNT(*) AS cnt FROM ... — extract cnt from first record.
+- For chart cards: use GROUP BY with COUNT(*) aliased as cnt.
+- Use EXACT picklist values (e.g. 'In Market' not 'in_market').
 - Generate 3-6 cards. Only SELECT queries. No markdown.
 Return ONLY the JSON array."""
 
@@ -1247,7 +1251,7 @@ Return ONLY the JSON array."""
             if not soql:
                 continue
             try:
-                result = await execute_soql(soql)
+                result = await execute_query(soql)
                 if "error" in result:
                     card["error"] = result["error"]
                     card["records"] = []
@@ -1292,7 +1296,7 @@ async def analytics_insight(req: AnalyticsRequest, current_user=Depends(get_curr
         total = c.get("totalSize", len(records))
         cards_summary += f"\n**{title}** ({total} records): {_json.dumps(records[:10], default=str)}\n"
 
-    system_prompt = """You are a Salesforce data analyst. Given the analytics cards and their data,
+    system_prompt = """You are a data analyst. Given the analytics cards and their data,
 write a concise executive summary (3-5 bullet points) highlighting key insights,
 trends, and actionable recommendations. Be specific with numbers. Use markdown formatting."""
 

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _last_soql_in(messages):
-    """Return the most recent assistant SOQL in a message list, or None."""
+    """Return the most recent assistant SQL in a message list, or None."""
     for m in reversed(messages or []):
         if m.get("role") == "assistant" and m.get("soql"):
             return m["soql"]
@@ -96,6 +96,6 @@ class ChatEngine:
             return {"answer": "Schema not loaded. Run: python -m scripts.refresh_schema", "data": None}
         total = sum(s.get("record_count", 0) or 0 for s in schema.values())
         return {
-            "answer": f"Connected to Salesforce — {total:,} records across {len(schema)} objects.\n\nAsk me anything!",
+            "answer": f"Connected — {total:,} records across {len(schema)} objects.\n\nAsk me anything!",
             "data": {"total_records": total, "total_objects": len(schema)},
         }

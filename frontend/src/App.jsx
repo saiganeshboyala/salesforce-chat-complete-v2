@@ -49,6 +49,8 @@ const I = {
   note: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
   report: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-5"/></svg>,
   analytics: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+  pencil: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>,
+  refresh: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>,
 }
 
 const timeStr = (d) => d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
@@ -297,7 +299,9 @@ export default function App() {
     refreshSessions()
   }, [refreshSessions])
 
-  const { sessionId, messages, loading, send, newChat, loadSession, bottomRef } = useChat(handleSessionChanged)
+  const { sessionId, messages, loading, send, editMessage, regenerate, newChat, loadSession, bottomRef } = useChat(handleSessionChanged)
+  const [editingId, setEditingId] = useState(null)
+  const [editText, setEditText] = useState('')
 
   useEffect(() => {
     api.welcome().then(setWelcome).catch(() => {})
@@ -584,6 +588,28 @@ export default function App() {
                             <span className="thinking-asterisk">*</span>
                             <span className="thinking-text">Thinking...</span>
                           </div>
+                        ) : msg.role === 'user' && editingId === msg.id ? (
+                          <div className="edit-message-form">
+                            <textarea
+                              className="edit-message-input"
+                              value={editText}
+                              onChange={e => setEditText(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                  e.preventDefault()
+                                  setEditingId(null)
+                                  editMessage(msg.id, editText)
+                                }
+                                if (e.key === 'Escape') setEditingId(null)
+                              }}
+                              autoFocus
+                              rows={2}
+                            />
+                            <div className="edit-message-actions">
+                              <button className="edit-btn save" onClick={() => { setEditingId(null); editMessage(msg.id, editText) }}>Save & Send</button>
+                              <button className="edit-btn cancel" onClick={() => setEditingId(null)}>Cancel</button>
+                            </div>
+                          </div>
                         ) : (
                           <>
                             <span
@@ -595,12 +621,33 @@ export default function App() {
                           </>
                         )}
                       </div>
+                      {msg.role === 'user' && editingId !== msg.id && !loading && (
+                        <button
+                          className="msg-action-btn edit-btn-icon"
+                          title="Edit message"
+                          onClick={() => { setEditingId(msg.id); setEditText(msg.content) }}
+                        >
+                          {I.pencil}
+                        </button>
+                      )}
                       {msg.role === 'assistant' && !msg.isError && (
                         <>
                           {msg.data?.records?.length > 0 && <DataChart records={msg.data.records} totalSize={msg.data.totalSize} />}
                           {msg.data?.records?.length > 0 && <DataTable records={msg.data.records} totalSize={msg.data.totalSize} />}
                           <SOQLBlock soql={msg.soql} route={msg.data?.route} />
-                          {!msg.streaming && <MessageActions message={msg} />}
+                          {!msg.streaming && (
+                            <div className="msg-actions-row">
+                              <MessageActions message={msg} />
+                              <button
+                                className="msg-action-btn regen-btn"
+                                title="Regenerate response"
+                                onClick={() => regenerate(msg.id)}
+                                disabled={loading}
+                              >
+                                {I.refresh} Regenerate
+                              </button>
+                            </div>
+                          )}
                           {showSuggestions && (
                             <div className="suggestion-chips">
                               {msg.suggestions.map(s => (

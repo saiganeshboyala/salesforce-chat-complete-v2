@@ -207,7 +207,7 @@ export default function AnalyticsPage({ onDrillDown }) {
         <div>
           <h2 className="analytics-title">AI Analytics</h2>
           <p className="analytics-subtitle">
-            Predictive insights from your Salesforce data
+            Predictive insights from your data
             {generatedAt && <span className="analytics-time"> — {new Date(generatedAt).toLocaleString()}</span>}
           </p>
         </div>
@@ -221,7 +221,7 @@ export default function AnalyticsPage({ onDrillDown }) {
       {loading ? (
         <div className="analytics-loading">
           <span className="thinking-asterisk">*</span>
-          <span>Analyzing your Salesforce data...</span>
+          <span>Analyzing your data...</span>
         </div>
       ) : (
         <div className="analytics-grid">

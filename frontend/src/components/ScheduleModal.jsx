@@ -25,7 +25,7 @@ export default function ScheduleModal({ message, onClose, onCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!soql) { setErr('This answer has no SOQL to schedule.'); return }
+    if (!soql) { setErr('This answer has no SQL query to schedule.'); return }
     setSaving(true); setErr('')
     try {
       const payload = {
@@ -62,7 +62,7 @@ export default function ScheduleModal({ message, onClose, onCreated }) {
 
         {!soql && (
           <div className="modal-error">
-            Only answers with a SOQL query can be scheduled.
+            Only answers with a SQL query can be scheduled.
           </div>
         )}
 
@@ -71,7 +71,7 @@ export default function ScheduleModal({ message, onClose, onCreated }) {
             <input className="input-field" value={name} onChange={e => setName(e.target.value)} required />
           </label>
 
-          <label>SOQL (read-only)
+          <label>SQL (read-only)
             <textarea className="input-field" value={soql} readOnly rows={3}
               style={{ fontFamily: 'var(--font-mono)', fontSize: 11, resize: 'vertical' }} />
           </label>

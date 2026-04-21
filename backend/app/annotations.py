@@ -1,4 +1,4 @@
-"""Per-user record annotations — notes + tags attached to Salesforce records."""
+"""Per-user record annotations — notes + tags attached to records."""
 import json
 import logging
 import uuid

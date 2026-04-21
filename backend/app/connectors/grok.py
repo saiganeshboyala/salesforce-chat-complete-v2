@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 NAME = "grok"
 DISPLAY_NAME = "Grok (xAI)"
-DESCRIPTION = "Grok-3 for fast analytics, SOQL generation, and chat answers."
+DESCRIPTION = "Grok-3 for fast analytics, SQL generation, and chat answers."
 
 
 def is_configured() -> bool:

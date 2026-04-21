@@ -2,7 +2,7 @@
 Hybrid AI Engine with Self-Learning
 
 Every question + answer is saved. The AI uses past successful
-queries as examples to write better SOQL over time.
+queries as examples to write better SQL over time.
 Users can thumbs-up/down answers to train it.
 """
 import json, logging, re, time
@@ -14,7 +14,7 @@ from app.chat.memory import save_interaction, get_learning_examples_prompt
 
 logger = logging.getLogger(__name__)
 
-# ── SOQL Result Cache (avoid re-querying Salesforce for same question within 5 min)
+# ── Query Result Cache (avoid re-querying for same question within 5 min)
 _soql_cache = {}
 _CACHE_TTL = 300  # 5 minutes
 
@@ -49,9 +49,9 @@ REPORT_PATTERNS = [
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH"},
         "default_time": "THIS_MONTH",
         "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = {time} ORDER BY BU_Name__c LIMIT 2000",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000",
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000",
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "BU_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000""",
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Verbal_Confirmation_Date__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
         ],
         "labels": ["Monthly Submissions", "Monthly Interviews", "Monthly Confirmations"],
     },
@@ -61,12 +61,12 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY BU_Name__c LIMIT 2000",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = LAST_WEEK ORDER BY Onsite_Manager__c LIMIT 2000",
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "BU_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Final_Status__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000""",
         ],
         "queries_lead": [
-            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c FROM Submissions__c WHERE CreatedDate = LAST_WEEK ORDER BY Offshore_Manager_Name__c LIMIT 2000",
-            "SELECT Student__r.Name, Offshore_Manager__c, Type__c, Final_Status__c FROM Interviews__c WHERE CreatedDate = LAST_WEEK ORDER BY Offshore_Manager__c LIMIT 2000",
+            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", i."Offshore_Manager__c", i."Type__c", i."Final_Status__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Offshore_Manager__c" LIMIT 2000""",
         ],
         "labels": ["Last Week Submissions", "Last Week Interviews"],
     },
@@ -75,7 +75,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH", "last month": "LAST_MONTH", "yesterday": "YESTERDAY", "today": "TODAY"},
         "default_time": "LAST_WEEK",
         "queries": [
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c, Marketing_Visa_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000"
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Verbal_Confirmation_Date__c", s."Marketing_Visa_Status__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} ORDER BY m."Name" LIMIT 2000"""
         ],
         "labels": ["Confirmations"],
     },
@@ -84,20 +84,20 @@ REPORT_PATTERNS = [
         "time_keywords": {},
         "default_time": None,
         "queries": [
-            "SELECT Name, Manager__r.Name, PreMarketingStatus__c, Resume_Preparation__c, Resume_Verified_By_Lead__c, Resume_Verified_By_Manager__c, Resume_Verification__c, Resume_Review__c, Otter_Screening__c, Otter_Final_Screening__c, Otter_Real_Time_Screeing_1__c, Otter_Real_Time_Screeing_2__c, Has_Linkedin_Created__c, Student_LinkedIn_Account_Review__c, MQ_Screening_By_Lead__c, MQ_Screening_By_Manager__c FROM Student__c WHERE Student_Marketing_Status__c = 'Pre Marketing' ORDER BY Manager__r.Name LIMIT 2000"
+            """SELECT s."Name", m."Name" AS "BU_Name", s."PreMarketingStatus__c", s."Resume_Preparation__c", s."Resume_Verified_By_Lead__c", s."Resume_Verified_By_Manager__c", s."Resume_Verification__c", s."Resume_Review__c", s."Otter_Screening__c", s."Otter_Final_Screening__c", s."Otter_Real_Time_Screeing_1__c", s."Otter_Real_Time_Screeing_2__c", s."Has_Linkedin_Created__c", s."Student_LinkedIn_Account_Review__c", s."MQ_Screening_By_Lead__c", s."MQ_Screening_By_Manager__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Pre Marketing' ORDER BY m."Name" LIMIT 2000"""
         ],
         "labels": ["PreMarketing Students"],
     },
     {
         "keywords": ["yesterday submission"],
         "time_keywords": {},
-        "default_time": None,
+        "default_time": "YESTERDAY",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c, Offshore_Manager_Name__c FROM Submissions__c WHERE Submission_Date__c = YESTERDAY ORDER BY BU_Name__c LIMIT 2000"
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c", "Offshore_Manager_Name__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "BU_Name__c" LIMIT 2000"""
         ],
         "queries_lead": [
-            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = YESTERDAY ORDER BY Offshore_Manager_Name__c LIMIT 2000"
+            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "Offshore_Manager_Name__c" LIMIT 2000"""
         ],
         "labels": ["Yesterday Submissions"],
     },
@@ -107,10 +107,10 @@ REPORT_PATTERNS = [
         "default_time": None,
         "by_lead": True,
         "queries_bu": [
-            "SELECT Name, Manager__r.Name, Technology__c, Last_Submission_Date__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Manager__r.Name LIMIT 2000"
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Last_Submission_Date__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND (s."Last_Submission_Date__c" < CURRENT_DATE - INTERVAL '3 days' OR s."Last_Submission_Date__c" IS NULL) ORDER BY m."Name" LIMIT 2000"""
         ],
         "queries_lead": [
-            "SELECT Name, Offshore_Manager_Name__c, Manager__r.Name, Technology__c, Last_Submission_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Offshore_Manager_Name__c LIMIT 2000"
+            """SELECT s."Name", s."Offshore_Manager_Name__c", m."Name" AS "BU_Name", s."Technology__c", s."Last_Submission_Date__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND (s."Last_Submission_Date__c" < CURRENT_DATE - INTERVAL '3 days' OR s."Last_Submission_Date__c" IS NULL) ORDER BY s."Offshore_Manager_Name__c" LIMIT 2000"""
         ],
         "labels": ["Students with No Recent Submissions"],
     },
@@ -119,7 +119,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH"},
         "default_time": "THIS_WEEK",
         "queries": [
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Interview_Date__c, Amount__c, Bill_Rate__c, Final_Status__c FROM Interviews__c WHERE (Amount__c = null OR Bill_Rate__c = null OR Final_Status__c = null) AND CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000"
+            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Interview_Date__c", i."Amount__c", i."Bill_Rate__c", i."Final_Status__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE (i."Amount__c" IS NULL OR i."Bill_Rate__c" IS NULL OR i."Final_Status__c" IS NULL) AND i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000"""
         ],
         "labels": ["Interviews with Missing Fields"],
     },
@@ -129,10 +129,10 @@ REPORT_PATTERNS = [
         "default_time": None,
         "by_lead": True,
         "queries_bu": [
-            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Manager__r.Name LIMIT 2000"
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "CreatedDate" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY m."Name" LIMIT 2000"""
         ],
         "queries_lead": [
-            "SELECT Name, Manager__r.Name, Offshore_Manager_Name__c, Technology__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Id NOT IN (SELECT Student__c FROM Interviews__c WHERE CreatedDate >= LAST_N_DAYS:14) ORDER BY Offshore_Manager_Name__c LIMIT 2000"
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Offshore_Manager_Name__c", s."Technology__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "CreatedDate" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY s."Offshore_Manager_Name__c" LIMIT 2000"""
         ],
         "labels": ["In-Market Students with No Interviews (14 days)"],
     },
@@ -141,7 +141,7 @@ REPORT_PATTERNS = [
         "time_keywords": {},
         "default_time": None,
         "queries": [
-            "SELECT Name, Total_Expenses_MIS__c, Each_Placement_Cost__c, BU_Student_With_Job_Count__c, Students_Count__c, In_Market_Students_Count__c, Verbal_Count__c, IN_JOB_Students_Count__c FROM Manager__c WHERE Active__c = true ORDER BY Name LIMIT 2000"
+            """SELECT "Name", "Total_Expenses_MIS__c", "Each_Placement_Cost__c", "BU_Student_With_Job_Count__c", "Students_Count__c", "In_Market_Students_Count__c", "Verbal_Count__c", "IN_JOB_Students_Count__c" FROM "Manager__c" WHERE "Active__c" = true ORDER BY "Name" LIMIT 2000"""
         ],
         "labels": ["BU Expenses & Placement Costs"],
     },
@@ -150,28 +150,17 @@ REPORT_PATTERNS = [
         "time_keywords": {},
         "default_time": None,
         "queries": [
-            "SELECT Student__r.Name, Share_With__r.Name, PayRate__c, Caluculated_Pay_Rate__c, Pay_Roll_Tax__c, Profit__c, Bill_Rate__c, Payroll_Month__c, Project_Type__c, Technology__c FROM Job__c WHERE Active__c = true ORDER BY Share_With__r.Name LIMIT 2000",
-            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' ORDER BY Manager__r.Name LIMIT 2000",
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", j."PayRate__c", j."Caluculated_Pay_Rate__c", j."Pay_Roll_Tax__c", j."Profit__c", j."Bill_Rate__c", j."Payroll_Month__c", j."Project_Type__c", j."Technology__c" FROM "Job__c" j LEFT JOIN "Student__c" s ON j."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON j."Share_With__c" = m."Id" WHERE j."Active__c" = true ORDER BY m."Name" LIMIT 2000""",
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' ORDER BY m."Name" LIMIT 2000""",
         ],
         "labels": ["Active Job Payroll", "Bench (In-Market Students)"],
-    },
-    {
-        "keywords": ["monthly sub", "monthly int", "monthly submission", "monthly interview", "monthly confirmation", "monthly conformation", "month sub & int", "monthly sub & int"],
-        "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH"},
-        "default_time": "THIS_MONTH",
-        "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE Submission_Date__c = {time} ORDER BY BU_Name__c LIMIT 2000",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000",
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000",
-        ],
-        "labels": ["Monthly Submissions", "Monthly Interviews", "Monthly Confirmations"],
     },
     {
         "keywords": ["total interview", "interview amount", "total amount"],
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH", "last week": "LAST_WEEK", "this week": "THIS_WEEK"},
         "default_time": "THIS_MONTH",
         "queries": [
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Amount__c, Amount_INR__c, Bill_Rate__c, Final_Status__c, Interview_Date__c FROM Interviews__c WHERE CreatedDate = {time} ORDER BY Onsite_Manager__c LIMIT 2000"
+            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Amount__c", i."Amount_INR__c", i."Bill_Rate__c", i."Final_Status__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000"""
         ],
         "labels": ["Interviews with Amounts"],
     },
@@ -182,10 +171,10 @@ REPORT_PATTERNS = [
         "name_filter": True,
         "whatsapp_format": True,
         "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Offshore_Manager_Name__c, Recruiter_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE BU_Name__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Student_Name__c LIMIT 2000",
-            "SELECT Student__r.Name, Onsite_Manager__c, Offshore_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE Onsite_Manager__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Offshore_Manager__c LIMIT 2000",
-            "SELECT Name, Manager__r.Name, Technology__c, Verbal_Confirmation_Date__c, Marketing_Visa_Status__c FROM Student__c WHERE Student_Marketing_Status__c = 'Verbal Confirmation' AND Manager__r.Name LIKE '%{name}%' AND Verbal_Confirmation_Date__c = {time} ORDER BY Manager__r.Name LIMIT 2000",
-            "SELECT Name, Manager__r.Name, Technology__c, Days_in_Market_Business__c, Last_Submission_Date__c FROM Student__c WHERE Student_Marketing_Status__c = 'In Market' AND Manager__r.Name LIKE '%{name}%' AND (Last_Submission_Date__c < LAST_N_DAYS:3 OR Last_Submission_Date__c = null) ORDER BY Manager__r.Name LIMIT 2000",
+            """SELECT "Student_Name__c", "BU_Name__c", "Offshore_Manager_Name__c", "Recruiter_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%{name}%' AND "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Student_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Offshore_Manager__c", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."Onsite_Manager__c" ILIKE '%{name}%' AND i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Offshore_Manager__c" LIMIT 2000""",
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Verbal_Confirmation_Date__c", s."Marketing_Visa_Status__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND m."Name" ILIKE '%{name}%' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c", s."Last_Submission_Date__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND m."Name" ILIKE '%{name}%' AND (s."Last_Submission_Date__c" < CURRENT_DATE - INTERVAL '3 days' OR s."Last_Submission_Date__c" IS NULL) ORDER BY m."Name" LIMIT 2000""",
         ],
         "labels": ["Weekly Submissions", "Weekly Interviews", "Weekly Confirmations", "Students Needing Attention"],
     },
@@ -195,8 +184,8 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "name_filter": True,
         "queries": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE BU_Name__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Submission_Date__c LIMIT 2000",
-            "SELECT Student__r.Name, Onsite_Manager__c, Type__c, Final_Status__c, Amount__c, Interview_Date__c FROM Interviews__c WHERE Onsite_Manager__c LIKE '%{name}%' AND CreatedDate = {time} ORDER BY Interview_Date__c LIMIT 2000",
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%{name}%' AND "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Submission_Date__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."Onsite_Manager__c" ILIKE '%{name}%' AND i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Interview_Date__c" LIMIT 2000""",
         ],
         "labels": ["Submissions", "Interviews"],
     },
@@ -206,10 +195,10 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY BU_Name__c, Student_Name__c LIMIT 2000"
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "BU_Name__c", "Student_Name__c" LIMIT 2000"""
         ],
         "queries_lead": [
-            "SELECT Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Student_Name__c LIMIT 2000"
+            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Student_Name__c" LIMIT 2000"""
         ],
         "labels": ["Student Performance (Submissions)"],
     },
@@ -219,20 +208,28 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            "SELECT Recruiter_Name__c, Student_Name__c, BU_Name__c, Client_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY BU_Name__c, Recruiter_Name__c LIMIT 2000"
+            """SELECT "Recruiter_Name__c", "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "BU_Name__c", "Recruiter_Name__c" LIMIT 2000"""
         ],
         "queries_lead": [
-            "SELECT Recruiter_Name__c, Student_Name__c, Offshore_Manager_Name__c, BU_Name__c, Submission_Date__c FROM Submissions__c WHERE CreatedDate = {time} ORDER BY Offshore_Manager_Name__c, Recruiter_Name__c LIMIT 2000"
+            """SELECT "Recruiter_Name__c", "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Recruiter_Name__c" LIMIT 2000"""
         ],
         "labels": ["Recruiter Performance (Submissions)"],
     },
 ]
 
 
+_PG_TIME_RANGES = {
+    "THIS_MONTH":  ("DATE_TRUNC('month', CURRENT_DATE)", "DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'"),
+    "LAST_MONTH":  ("DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'", "DATE_TRUNC('month', CURRENT_DATE)"),
+    "THIS_WEEK":   ("DATE_TRUNC('week', CURRENT_DATE)", "DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '1 week'"),
+    "LAST_WEEK":   ("DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'", "DATE_TRUNC('week', CURRENT_DATE)"),
+    "TODAY":       ("CURRENT_DATE", "CURRENT_DATE + INTERVAL '1 day'"),
+    "YESTERDAY":   ("CURRENT_DATE - INTERVAL '1 day'", "CURRENT_DATE"),
+}
+
 def _match_report_pattern(question):
     """Match question to a known report pattern. Returns list of (query, label) or None."""
     q_lower = question.lower()
-    # Normalize common typos
     q_lower = q_lower.replace("conformation", "confirmation").replace("submision", "submission")
 
     for pattern in REPORT_PATTERNS:
@@ -258,31 +255,31 @@ def _match_report_pattern(question):
         resolved = []
         labels = pattern.get("labels", [])
 
-        # Extract person name for name_filter patterns
         name_val = ""
         if pattern.get("name_filter"):
             import re as _re
-            # Try "weekly report for BU [name]" pattern first
             name_match = _re.search(r'(?:weekly\s+(?:performance\s+)?report\s+(?:for|of)\s+(?:bu\s+)?)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
             if not name_match:
-                # Try "send weekly report [name]" pattern
                 name_match = _re.search(r'(?:send\s+weekly\s+report\s+(?:for\s+)?(?:bu\s+)?)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
             if not name_match:
-                # Fall back to "performance of/for [name]" pattern
                 name_match = _re.search(r'(?:performance\s+(?:of|for|report\s+(?:of|for))\s+)(.+?)(?:\s+(?:last|this|yesterday|today|of\s+last|of\s+this)|\s*$)', q_lower, _re.IGNORECASE)
             if name_match:
                 name_val = name_match.group(1).strip().rstrip('.')
             if not name_val:
                 continue
 
+        time_start, time_end = "", ""
+        if time_val and time_val in _PG_TIME_RANGES:
+            time_start, time_end = _PG_TIME_RANGES[time_val]
+
         for i, q_template in enumerate(queries):
-            soql = q_template
-            if time_val:
-                soql = soql.replace("{time}", time_val)
+            sql = q_template
+            if time_start:
+                sql = sql.replace("{time_start}", time_start).replace("{time_end}", time_end)
             if name_val:
-                soql = soql.replace("{name}", name_val)
+                sql = sql.replace("{name}", name_val)
             label = labels[i] if i < len(labels) else f"Query {i+1}"
-            resolved.append((soql, label))
+            resolved.append((sql, label))
 
         if resolved:
             logger.info(f"Report pattern matched: {labels[0] if labels else 'unknown'} ({len(resolved)} queries)")
@@ -291,8 +288,8 @@ def _match_report_pattern(question):
     return None
 
 # ── Step 1: Pick the right object(s) ─────────────────────────────
-OBJECT_PICKER_PROMPT = """You are a Salesforce schema expert for a staffing/consulting company.
-Given a user question, decide which Salesforce object(s) to query.
+OBJECT_PICKER_PROMPT = """You are a PostgreSQL database expert for a staffing/consulting company.
+Given a user question, decide which database table(s) to query.
 
 Return ONLY a JSON object like: {"objects": ["Student__c"], "reason": "student data with BU via Manager__r"}
 No other text.
@@ -327,7 +324,7 @@ KEY RULES:
 - "monthly sub" / "monthly int" / "monthly confirmation" -> Submissions__c + Interviews__c + Student__c
 - For cross-object questions, pick the PRIMARY object and use __r lookups for related data."""
 
-# ── Step 2: Generate SOQL with focused schema ────────────────────
+# ── Step 2: Generate SQL with focused schema ────────────────────
 SOQL_PROMPT = """You are a PostgreSQL SQL expert for a staffing/consulting company database.
 Return ONLY the SQL query. No explanation, no markdown, no backticks.
 
@@ -445,7 +442,7 @@ TYPE 4: REPORT ("weekly report", "performance report", "send report for BU X")
 FORMATTING:
 - **Bold** key numbers. Format dates as "Apr 15, 2026", numbers with commas.
 - Tables: left-align names, center-align numbers. Max 6 columns.
-- Never show Salesforce IDs.
+- Never show database IDs.
 - No filler phrases like "Based on the data..." or "According to the results...".
 - If data has a PRE-COMPUTED SUMMARY section, use those exact numbers.
 
@@ -541,15 +538,15 @@ RULES:
 - Include Days in Market if available.
 """
 
-ROUTER_PROMPT = """Decide how to answer this Salesforce question. Return ONLY one word.
-Default to SOQL unless the question is clearly about finding similar/related records.
-SOQL — counts, lists, filters, sums, dates, specific records, status, reports, performance, any data question
+ROUTER_PROMPT = """Decide how to answer this database question. Return ONLY one word.
+Default to SQL unless the question is clearly about finding similar/related records.
+SQL — counts, lists, filters, sums, dates, specific records, status, reports, performance, any data question
 RAG — ONLY for: "find similar", "records like", "recommend", vague pattern matching
 BOTH — need exact data AND similarity search (very rare)
-Return ONLY: SOQL, RAG, or BOTH"""
+Return ONLY: SQL, RAG, or BOTH"""
 
 RAG_PROMPT = """You are an elite data analyst for a staffing/consulting company. You have:
-1. QUERY RESULTS — exact numbers from Salesforce database (authoritative)
+1. QUERY RESULTS — exact numbers from the database (authoritative)
 2. SIMILAR RECORDS — found by semantic search (supplementary context)
 
 RULES:
@@ -583,14 +580,14 @@ async def _call_ai(system, message, max_tokens=2000, provider=None, temperature=
 
     def _grok():
         from openai import OpenAI
-        r = OpenAI(api_key=settings.grok_api_key, base_url="https://api.x.ai/v1").chat.completions.create(
+        r = OpenAI(api_key=settings.grok_api_key, base_url="https://api.x.ai/v1", timeout=45.0).chat.completions.create(
             model=settings.grok_model, max_tokens=max_tokens, temperature=temperature,
             messages=[{"role": "system", "content": system}] + msgs)
         return r.choices[0].message.content
 
     def _openai():
         from openai import OpenAI
-        r = OpenAI(api_key=settings.openai_api_key).chat.completions.create(
+        r = OpenAI(api_key=settings.openai_api_key, timeout=45.0).chat.completions.create(
             model=settings.openai_model, max_tokens=max_tokens, temperature=temperature,
             messages=[{"role": "system", "content": system}] + msgs)
         return r.choices[0].message.content
@@ -871,7 +868,7 @@ def _get_focused_schema(obj_names):
 
 
 def _extract_object_fields_hint(soql, _schema_text=None):
-    """Extract the object name from a SOQL query and list its exact fields."""
+    """Extract the object name from a SQL query and list its exact fields."""
     m = re.search(r'FROM\s+(\w+)', soql, re.IGNORECASE)
     if not m:
         return ""
@@ -885,7 +882,7 @@ def _extract_object_fields_hint(soql, _schema_text=None):
 
 
 def _validate_soql_fields(soql):
-    """Check if the SOQL query uses valid field/object names. Returns error string or None."""
+    """Check if the SQL query uses valid field/object names. Returns error string or None."""
     schema = get_schema()
     if not schema:
         return None
@@ -980,7 +977,7 @@ async def _pick_objects(question, schema_text):
 # ── Multi-query execution ────────────────────────────────────────
 
 async def _execute_multi_query(query_pairs):
-    """Execute multiple SOQL queries and combine results."""
+    """Execute multiple SQL queries and combine results."""
     all_recs = []
     all_queries = []
     total_size = 0
@@ -1012,10 +1009,10 @@ async def _execute_multi_query(query_pairs):
     return queries_str, combined_result, all_recs
 
 
-# ── SOQL Path ────────────────────────────────────────────────────
+# ── SQL Path ────────────────────────────────────────────────────
 
 async def _soql_path(question, schema_text, history=None, last_soql=None):
-    # Check cache first (skip for follow-ups that modify previous SOQL)
+    # Check cache first (skip for follow-ups that modify previous SQL)
     if not last_soql:
         cached = _cache_get(question)
         if cached:
@@ -1040,7 +1037,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
                 if combined_recs is not None:
                     return queries_str, combined_result, combined_recs
 
-    learning = get_learning_examples_prompt(question)
+    learning = await get_learning_examples_prompt(question)
 
     # Step 1: Pick the right object(s)
     picked_objects = await _pick_objects(question, schema_text)
@@ -1174,7 +1171,7 @@ async def _route(question):
             return "BOTH"
         if "RAG" in r:
             return "RAG"
-    return "SOQL"
+    return "SQL"
 
 
 def _is_whatsapp_report(question):
@@ -1201,14 +1198,14 @@ async def answer_question(question, conversation_history=None, username=None, la
     soql_query, soql_result, soql_recs = None, None, None
     rag_results = None
 
-    if route in ("SOQL", "BOTH"):
+    if route in ("SQL", "BOTH"):
         soql_query, soql_result, soql_recs = await _soql_path(question, schema_text, conversation_history, last_soql=last_soql)
 
         if soql_recs is None or (soql_recs is not None and len(soql_recs) == 0):
             name_words = [w for w in question.split() if len(w) > 2 and w[0].isupper()]
             if len(name_words) >= 2:
                 last_word = name_words[-1]
-                fallback_q = f"SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c FROM Student__c WHERE Name LIKE '%{last_word}%' LIMIT 50"
+                fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
                 try:
                     fb_result = await execute_query(fallback_q)
                     if "error" not in fb_result and fb_result.get("records"):
@@ -1255,7 +1252,7 @@ async def answer_question(question, conversation_history=None, username=None, la
         # Check if multi-query results (records have _query_label)
         labels = set(r.get("_query_label") for r in soql_recs if "_query_label" in r)
         if labels:
-            parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSOQL used:\n{soql_query}")
+            parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSQL used:\n{soql_query}")
             for label in sorted(labels):
                 group = [r for r in soql_recs if r.get("_query_label") == label]
                 clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
@@ -1263,9 +1260,9 @@ async def answer_question(question, conversation_history=None, username=None, la
                 parts.append(json.dumps(clean[:100], indent=2, default=str)[:20000])
         else:
             if is_limited:
-                parts.append(f"QUERY RESULTS: **{total} TOTAL records** in Salesforce (showing {shown} below, but the TRUE TOTAL is {total}).\nIMPORTANT: Use {total} as the total count, NOT {shown}.\nSOQL used: {soql_query}")
+                parts.append(f"QUERY RESULTS: **{total} TOTAL records** in database (showing {shown} below, but the TRUE TOTAL is {total}).\nIMPORTANT: Use {total} as the total count, NOT {shown}.\nSQL used: {soql_query}")
             else:
-                parts.append(f"QUERY RESULTS ({total} total records from Salesforce):\nSOQL used: {soql_query}")
+                parts.append(f"QUERY RESULTS ({total} total records from database):\nSQL used: {soql_query}")
             parts.append(json.dumps(soql_recs[:200], indent=2, default=str)[:50000])
 
     if rag_results:
@@ -1287,7 +1284,7 @@ async def answer_question(question, conversation_history=None, username=None, la
             "\n- Use broader terms (e.g. 'students' instead of a specific name)"
             "\n- Ask about a specific object: Students, Submissions, Interviews, Jobs, Employees"
         )
-        save_interaction(question, soql_query, no_data_msg, route, username=username)
+        await save_interaction(question, soql_query, no_data_msg, route, username=username)
         return {"answer": no_data_msg, "soql": soql_query, "data": None, "suggestions": ["How many students are in market?", "Show today's submissions by BU", "List all BU managers"]}
 
     # Pre-compute data summary for accurate counts
@@ -1313,7 +1310,7 @@ async def answer_question(question, conversation_history=None, username=None, la
 
     answer = await _call_ai(system, prompt, max_tokens=6000)
 
-    save_interaction(question, soql_query, answer or "", route, username=username)
+    await save_interaction(question, soql_query, answer or "", route, username=username)
     suggestions = await _generate_suggestions(question, answer or "")
 
     return {
@@ -1353,7 +1350,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
     soql_query, soql_result, soql_recs = None, None, None
     rag_results = None
 
-    if route in ("SOQL", "BOTH"):
+    if route in ("SQL", "BOTH"):
         # Check cache
         if not last_soql:
             cached = _cache_get(question)
@@ -1367,14 +1364,14 @@ async def answer_question_stream(question, conversation_history=None, username=N
                     yield {"type": "thinking", "data": f"Matched report pattern ({len(pattern_match['queries'])} queries)"}
 
         if soql_recs is None:
-            yield {"type": "thinking", "data": "Picking Salesforce objects"}
+            yield {"type": "thinking", "data": "Picking database tables"}
             soql_query, soql_result, soql_recs = await _soql_path(question, schema_text, conversation_history, last_soql=last_soql)
 
         if soql_query:
             yield {"type": "soql", "data": soql_query}
 
         if soql_recs is not None and len(soql_recs) > 0:
-            yield {"type": "thinking", "data": f"Fetched {len(soql_recs)} records from Salesforce"}
+            yield {"type": "thinking", "data": f"Fetched {len(soql_recs)} records from database"}
         elif soql_result and "error" in soql_result:
             yield {"type": "thinking", "data": "Query error — trying fallback"}
 
@@ -1384,7 +1381,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
             if len(name_words) >= 2:
                 yield {"type": "thinking", "data": "Searching by name"}
                 last_word = name_words[-1]
-                fallback_q = f"SELECT Name, Student_Marketing_Status__c, Technology__c, Manager__r.Name, Phone__c, Email__c, Marketing_Visa_Status__c, Days_in_Market_Business__c FROM Student__c WHERE Name LIKE '%{last_word}%' LIMIT 50"
+                fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
                 try:
                     fb_result = await execute_query(fallback_q)
                     if "error" not in fb_result and fb_result.get("records"):
@@ -1443,7 +1440,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
 
         labels = set(r.get("_query_label") for r in soql_recs if "_query_label" in r)
         if labels:
-            parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSOQL used:\n{soql_query}")
+            parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSQL used:\n{soql_query}")
             for label in sorted(labels):
                 group = [r for r in soql_recs if r.get("_query_label") == label]
                 clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
@@ -1451,9 +1448,9 @@ async def answer_question_stream(question, conversation_history=None, username=N
                 parts.append(json.dumps(clean[:100], indent=2, default=str)[:20000])
         else:
             if is_limited:
-                parts.append(f"QUERY RESULTS: **{total} TOTAL records** in Salesforce (showing {shown} below, but the TRUE TOTAL is {total}).\nIMPORTANT: Use {total} as the total count, NOT {shown}.\nSOQL used: {soql_query}")
+                parts.append(f"QUERY RESULTS: **{total} TOTAL records** in database (showing {shown} below, but the TRUE TOTAL is {total}).\nIMPORTANT: Use {total} as the total count, NOT {shown}.\nSQL used: {soql_query}")
             else:
-                parts.append(f"QUERY RESULTS ({total} total records from Salesforce):\nSOQL used: {soql_query}")
+                parts.append(f"QUERY RESULTS ({total} total records from database):\nSQL used: {soql_query}")
             parts.append(json.dumps(soql_recs[:200], indent=2, default=str)[:50000])
 
     if rag_results:
@@ -1479,7 +1476,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
         yield {"type": "thinking_done", "data": None}
         yield {"type": "token", "data": no_data_msg}
         try:
-            save_interaction(question, soql_query, no_data_msg, route, username=username)
+            await save_interaction(question, soql_query, no_data_msg, route, username=username)
         except Exception:
             pass
         error_suggestions = [
@@ -1532,7 +1529,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
     answer = "".join(collected) or "Found data but couldn't summarize."
 
     try:
-        save_interaction(question, soql_query, answer, route, username=username)
+        await save_interaction(question, soql_query, answer, route, username=username)
     except Exception as e:
         logger.warning(f"save_interaction failed: {e}")
 

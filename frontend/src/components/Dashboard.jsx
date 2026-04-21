@@ -11,14 +11,14 @@ const tooltipStyle = {
 const AUTO_REFRESH_MS = 5 * 60 * 1000
 
 const PRESETS = [
-  { id: 'p_total',  type: 'metric', title: 'Total Students',       soql: 'SELECT COUNT() FROM Student__c', chartType: 'auto' },
-  { id: 'p_market', type: 'metric', title: 'Students In Market',   soql: "SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c='In Market'", chartType: 'auto' },
-  { id: 'p_jobs',   type: 'metric', title: 'Active Jobs',          soql: 'SELECT COUNT() FROM Job__c', chartType: 'auto' },
-  { id: 'p_iv',     type: 'metric', title: 'Interviews This Month',soql: 'SELECT COUNT() FROM Interview__c WHERE CreatedDate = THIS_MONTH', chartType: 'auto' },
-  { id: 'p_status', type: 'chart',  title: 'Students by Status',   soql: 'SELECT Student_Marketing_Status__c, COUNT(Id) cnt FROM Student__c GROUP BY Student_Marketing_Status__c ORDER BY COUNT(Id) DESC', chartType: 'pie' },
-  { id: 'p_tech',   type: 'chart',  title: 'Students by Technology', soql: 'SELECT Student_Technology__c, COUNT(Id) cnt FROM Student__c GROUP BY Student_Technology__c ORDER BY COUNT(Id) DESC LIMIT 10', chartType: 'bar' },
-  { id: 'p_subs',   type: 'chart',  title: 'Monthly Submissions',  soql: 'SELECT CALENDAR_MONTH(CreatedDate) mon, COUNT(Id) cnt FROM Submission__c WHERE CreatedDate = THIS_YEAR GROUP BY CALENDAR_MONTH(CreatedDate) ORDER BY CALENDAR_MONTH(CreatedDate)', chartType: 'bar' },
-  { id: 'p_exp',    type: 'chart',  title: 'Expenses by BU',       soql: 'SELECT Business_Unit__c, SUM(Amount__c) total FROM Expense__c GROUP BY Business_Unit__c ORDER BY SUM(Amount__c) DESC', chartType: 'bar' },
+  { id: 'p_total',  type: 'metric', title: 'Total Students',       soql: 'SELECT COUNT(*) AS cnt FROM "Student__c"', chartType: 'auto' },
+  { id: 'p_market', type: 'metric', title: 'Students In Market',   soql: `SELECT COUNT(*) AS cnt FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market'`, chartType: 'auto' },
+  { id: 'p_jobs',   type: 'metric', title: 'Active Jobs',          soql: 'SELECT COUNT(*) AS cnt FROM "Job__c" WHERE "Active__c" = true', chartType: 'auto' },
+  { id: 'p_iv',     type: 'metric', title: 'Interviews This Month',soql: `SELECT COUNT(*) AS cnt FROM "Interviews__c" WHERE "CreatedDate" >= DATE_TRUNC('month', CURRENT_DATE)`, chartType: 'auto' },
+  { id: 'p_status', type: 'chart',  title: 'Students by Status',   soql: 'SELECT "Student_Marketing_Status__c", COUNT(*) AS cnt FROM "Student__c" GROUP BY "Student_Marketing_Status__c" ORDER BY cnt DESC', chartType: 'pie' },
+  { id: 'p_tech',   type: 'chart',  title: 'Students by Technology', soql: 'SELECT "Technology__c", COUNT(*) AS cnt FROM "Student__c" GROUP BY "Technology__c" ORDER BY cnt DESC LIMIT 10', chartType: 'bar' },
+  { id: 'p_subs',   type: 'chart',  title: 'Monthly Submissions',  soql: `SELECT DATE_TRUNC('month', "Submission_Date__c") AS mon, COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= CURRENT_DATE - INTERVAL '1 year' GROUP BY mon ORDER BY mon`, chartType: 'bar' },
+  { id: 'p_exp',    type: 'chart',  title: 'Expenses by BU',       soql: 'SELECT "Name", "Total_Expenses_MIS__c" AS total FROM "Manager__c" WHERE "Active__c" = true ORDER BY "Total_Expenses_MIS__c" DESC', chartType: 'bar' },
 ]
 
 const CHART_TYPES = [
@@ -181,7 +181,7 @@ function AddWidgetModal({ onAdd, onClose }) {
                 </label>
               )}
               <label>
-                <span>SOQL</span>
+                <span>SQL Query</span>
                 <textarea rows={4} value={form.soql} onChange={e => setForm(f => ({ ...f, soql: e.target.value }))} placeholder="SELECT COUNT() FROM Student__c" />
               </label>
               <div className="modal-footer">

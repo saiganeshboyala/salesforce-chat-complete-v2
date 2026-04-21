@@ -1,5 +1,5 @@
 """
-Scheduled reports — persistent SOQL queries that run on a cron-like schedule.
+Scheduled reports — persistent SQL queries that run on a cron-like schedule.
 
 Storage: {data_dir}/users/{username}/schedules.json
 Runs:    {data_dir}/users/{username}/reports/{schedule_id}/{timestamp}.csv + .json

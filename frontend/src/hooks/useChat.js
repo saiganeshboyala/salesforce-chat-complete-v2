@@ -168,6 +168,24 @@ export function useChat(onSessionChanged) {
     }
   }, [loading, sessionId, messages.length, onSessionChanged])
 
+  const editMessage = useCallback((msgId, newText) => {
+    if (loading) return
+    const idx = messages.findIndex(m => m.id === msgId)
+    if (idx === -1) return
+    setMessages(prev => prev.slice(0, idx))
+    setTimeout(() => send(newText), 50)
+  }, [loading, messages, send])
+
+  const regenerate = useCallback((msgId) => {
+    if (loading) return
+    const idx = messages.findIndex(m => m.id === msgId)
+    if (idx === -1) return
+    const userMsg = messages.slice(0, idx).reverse().find(m => m.role === 'user')
+    if (!userMsg) return
+    setMessages(prev => prev.slice(0, idx))
+    setTimeout(() => send(userMsg.content), 50)
+  }, [loading, messages, send])
+
   const newChat = useCallback(() => {
     setSessionId(newSessionId())
     setMessages([])
@@ -183,5 +201,5 @@ export function useChat(onSessionChanged) {
     }
   }, [])
 
-  return { sessionId, messages, loading, send, newChat, loadSession, bottomRef }
+  return { sessionId, messages, loading, send, editMessage, regenerate, newChat, loadSession, bottomRef }
 }

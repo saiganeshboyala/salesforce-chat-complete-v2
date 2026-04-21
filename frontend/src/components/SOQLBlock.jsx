@@ -16,7 +16,7 @@ export default function SOQLBlock({ soql, route }) {
     <div style={{ marginTop: 6 }}>
       <button className="soql-toggle" onClick={() => setOpen(!open)}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-        SOQL Query
+        SQL Query
         {route && <span className="soql-badge">{route}</span>}
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }}>
           <path d="M6 9l6 6 6-6"/>

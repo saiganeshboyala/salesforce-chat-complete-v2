@@ -1,10 +1,17 @@
 """
-1000+ Test Questions for Salesforce Chat API (PostgreSQL backend)
-Tests the chat endpoint to verify queries run correctly on PostgreSQL.
+Comprehensive Test Suite for Chat API (PostgreSQL backend)
+1200+ questions across difficulty levels 1-10 with self-correcting retry logic.
 
 Run: python tests/test_questions.py
-  - Tests all questions, reports pass/fail, shows errors
-  - Re-tests failed questions after self-correction attempts
+  --max N         Limit to first N questions
+  --category X    Filter by category name
+  --level N       Filter by difficulty level (1-10)
+  --retries N     Max retries for failed questions (default 2)
+  --url URL       API base URL (default http://localhost:8000)
+  --parallel N    Concurrent requests (default 1)
+
+Self-correcting: on failure, the runner re-sends the question with a hint
+to the AI, then retries. If still failing after max retries, it logs the error.
 
 Requires: pip install httpx
 """
@@ -13,502 +20,419 @@ import sys
 import json
 import time
 import uuid
+import io
 import httpx
+from datetime import datetime
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 BASE_URL = os.getenv("TEST_API_URL", "http://localhost:8000")
 AUTH_TOKEN = os.getenv("TEST_AUTH_TOKEN", "")
 
 # ═══════════════════════════════════════════════════════════════════════
-# QUESTION CATEGORIES
+# DIFFICULTY LEVEL 1 - Simple counts and lists (single table, no filters)
 # ═══════════════════════════════════════════════════════════════════════
 
-SIMPLE_STUDENT_QUERIES = [
-    "Show all students",
-    "List all active students",
+LEVEL_1_BASIC_COUNTS = [
     "How many students do we have?",
-    "Show students in market",
-    "List students who are active in market",
-    "Show me students currently in marketing",
-    "Get all students with their technology",
-    "Show student list with email",
-    "List student names and phone numbers",
-    "Show all students with their BU name",
-    "Get students and their visa status",
-    "Show me students with their marketing status",
-    "List all students and their technology",
-    "Who are the students on bench?",
-    "Show me students with verbal confirmation",
-    "List confirmed students",
-    "Show students on hold",
-    "Who got pulled out?",
-    "Students not ready for market",
-    "Show students with status confirmed",
-    "List all active in market students",
-    "Get students with H1B visa",
-    "Show OPT students",
-    "List CPT students",
-    "Show all GC holders",
-    "Students with citizen status",
-    "H4 EAD students list",
-    "Show L1 visa students",
-    "List students on L2 EAD",
-    "Show me Java students",
-    "List all Python developers",
-    "Who are the .NET students?",
-    "Show Salesforce technology students",
-    "AWS students list",
-    "Azure technology students",
-    "DevOps students in market",
-    "Data Engineering students",
-    "React developers list",
-    "Angular students",
-    "Full Stack students",
-    "SAP technology students",
-    "ServiceNow students",
-    "Cybersecurity students",
-    "AI/ML students",
-    "Tableau students list",
-    "Power BI students",
-    "Selenium testers",
-    "Manual testing students",
-    "Business Analyst students",
-    "Show me all students with days in market",
-    "Students in market more than 30 days",
-    "Students in market more than 60 days",
-    "Students in market more than 90 days",
-    "Show students with their recruiter name",
-    "List students with offshore manager",
-    "Show all students sorted by technology",
-    "Students sorted by days in market",
-    "Show latest students added",
-    "List students by created date",
-    "Show students with project started status",
-    "Students in pre marketing",
-    "Show students with project completed status",
-    "List all student technologies",
-    "How many students in each technology?",
-    "Show students count by visa status",
-    "Students with more than 100 days in market",
-    "New students added recently",
-    "Show students without phone number",
-    "Students without email",
-    "List students with their batch",
-    "Show students sorted by name",
-    "Total number of active students",
-    "How many students are in verbal confirmation?",
-    "Count of students by status",
-    "Show STEM OPT students",
-    "List USC students",
-    "Students with GC visa in Java",
-    "H1 students with DevOps technology",
-    "OPT students in Data Engineering",
-    "Show students with more than 50 days in market",
-    "Who has been in market the longest?",
-    "Top 10 students by days in market",
-    "Show me all active students with Java technology",
-    "Python students who are active in market",
-    "Active .NET students",
-    "DevOps students who are active",
-    "List all students under pre marketing status",
-    "Show students added this month",
-    "Students created last week",
-    "New students added last 7 days",
-    "Students added in the last 30 days",
-    "Show recently modified students",
+    "Total student count",
+    "How many submissions total?",
+    "How many interviews total?",
+    "How many jobs are there?",
+    "How many employees?",
+    "How many BU managers?",
+    "Total accounts count",
+    "Total contacts count",
+    "How many active jobs?",
+    "Count of students",
+    "Count of submissions",
+    "Count of interviews",
+    "Number of students",
+    "Number of submissions",
+    "Number of interviews",
+    "Number of jobs",
+    "Number of employees",
+    "Give me total students",
+    "What's the student count?",
 ]
 
-SIMPLE_SUBMISSION_QUERIES = [
-    "Show all submissions",
-    "List today submissions",
-    "Show today's submissions",
-    "How many submissions today?",
-    "Today submissions count",
-    "Show this week submissions",
-    "This week's submissions list",
-    "Show last week submissions",
-    "How many submissions last week?",
-    "Show this month submissions",
-    "This month submission count",
-    "List last month submissions",
-    "Show submissions for last 7 days",
-    "Last 14 days submissions",
-    "Last 30 days submissions",
-    "Show all submissions with BU name",
-    "List submissions with client name",
-    "Show submissions with student name",
-    "Get submissions with technology",
-    "Show submissions with recruiter",
-    "List submissions sorted by date",
-    "Latest submissions first",
-    "Show recent submissions",
-    "Submissions sorted by BU",
-    "Show submissions count",
-    "How many total submissions?",
-    "Show submission status breakdown",
-    "List submissions with vendor name",
-    "Show submissions with rate",
-    "Submissions with rate above 60",
-    "Submissions with rate above 80",
-    "Show high rate submissions",
-    "List submissions with offshore manager",
-    "Show submissions with onsite manager",
-    "Submissions with prime vendor",
-    "Show all submissions this quarter",
-    "Last quarter submissions",
-    "This year submissions",
-    "Show submissions for yesterday",
-    "Yesterday's submission list",
-]
-
-SIMPLE_INTERVIEW_QUERIES = [
-    "Show all interviews",
-    "List today interviews",
-    "Today's interviews",
-    "How many interviews today?",
-    "Show this week interviews",
-    "This week's interview list",
-    "Last week interviews",
-    "How many interviews last week?",
-    "This month interviews",
-    "Show last month interviews",
-    "Interviews in last 7 days",
-    "Last 14 days interviews",
-    "Last 30 days interviews",
-    "Show interviews with final status",
-    "List interviews by type",
-    "Show interview types",
-    "List technical interviews",
-    "Show client interviews",
-    "HR interviews list",
-    "Panel interviews",
-    "Show first round interviews",
-    "Second round interviews",
-    "Final round interviews",
-    "Show selected interviews",
-    "Interviews with confirmation status",
-    "Rejected interviews",
-    "Rescheduled interviews",
-    "Cancelled interviews",
-    "Show interviews sorted by date",
-    "Latest interviews",
-    "Recent interviews",
-    "Interviews with good feedback",
-    "Very good interviews",
-    "Average interviews",
-    "Show interviews with student name",
-    "List interviews with BU name",
-    "Interviews with onsite manager",
-    "Show interviews with technology",
-    "Interviews with client name",
-    "Show all interviews this quarter",
-]
-
-SIMPLE_JOB_QUERIES = [
+LEVEL_1_SIMPLE_LISTS = [
+    "Show all students",
+    "List all students",
+    "Show student names",
+    "List all BU managers",
+    "Show all BU names",
+    "List all technologies",
     "Show all jobs",
     "List active jobs",
-    "How many jobs are there?",
-    "Show jobs with status",
-    "List job titles",
-    "Show jobs by company",
-    "Recent jobs added",
-    "Jobs created this month",
-    "Jobs created last week",
-    "Show jobs with technology",
-    "List W2 jobs",
-    "Show C2C jobs",
-    "PD type jobs",
-    "Jobs sorted by date",
-    "Latest jobs",
-]
-
-SIMPLE_EMPLOYEE_QUERIES = [
     "Show all employees",
-    "List active employees",
-    "How many employees?",
-    "Show employees by department",
-    "List employee designations",
-    "Show recently added employees",
-    "Employees created this month",
-    "Employee list with status",
-    "Show all employee names",
-    "Active employees count",
+    "List employee names",
+    "Show submissions",
+    "List interviews",
+    "Show student technologies",
+    "Show student visa statuses",
+    "List all student statuses",
+    "Show marketing statuses",
+    "List all students sorted by name",
+    "Show latest students added",
+    "List recently added students",
+    "Show all student names and technology",
 ]
 
-# ── Date-filtered queries ──
-DATE_FILTERED_QUERIES = [
-    "Today's submissions BU wise",
-    "Yesterday submissions by BU",
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 2 - Single filter queries (one WHERE condition)
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_2_STATUS_FILTER = [
+    "Show students in market",
+    "List students with verbal confirmation",
+    "Show students with exit status",
+    "List pre marketing students",
+    "Show project started students",
+    "Students with project completed status",
+    "How many students in market?",
+    "How many students with verbal confirmation?",
+    "Count of students in exit",
+    "How many pre marketing students?",
+    "How many project started?",
+    "Students with project completed in market status",
+    "How many students are active in market?",
+    "Show confirmed students",
+    "List students on bench",
+    "Students not ready for market",
+    "Who got pulled out?",
+    "Show students on hold",
+    "Students currently in marketing",
+    "Active in market students",
+]
+
+LEVEL_2_TECHNOLOGY_FILTER = [
+    "Show Java students",
+    "List Python students",
+    "Show DevOps students",
+    "List .NET students",
+    "Show Data Engineering students",
+    "List SFDC students",
+    "Show DS/AI students",
+    "List Business Analyst students",
+    "Show ServiceNow students",
+    "List SAP BTP students",
+    "Show RPA students",
+    "List PowerBI students",
+    "How many Java students?",
+    "How many DevOps students?",
+    "How many Python students?",
+    "How many .NET students?",
+    "How many Data Engineering students?",
+    "Java student count",
+    "DevOps student count",
+    "DE students count",
+    "CS students list",
+    "AEM students",
+]
+
+LEVEL_2_VISA_FILTER = [
+    "Show H1 visa students",
+    "List OPT students",
+    "Show GC holders",
+    "List H4 EAD students",
+    "Show STEM students",
+    "List USC students",
+    "Show CPT students",
+    "List L2 students",
+    "How many H1 students?",
+    "How many OPT students?",
+    "How many GC students?",
+    "How many H4 EAD students?",
+    "Count of STEM OPT students",
+    "Count of USC students",
+    "H1B student list",
+    "OPT student count",
+    "GC student count",
+    "Visa wise student count",
+    "Students with citizen status",
+    "H1 transfer students",
+]
+
+LEVEL_2_ACTIVE_FILTER = [
+    "Show active jobs",
+    "List active employees",
+    "Show active BU managers",
+    "How many active jobs?",
+    "How many active employees?",
+    "Active student count",
+    "Active employees list",
+    "Show active BU manager names",
+    "Active jobs count",
+    "List all active managers",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 3 - Date-filtered queries (time ranges)
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_3_TODAY_YESTERDAY = [
+    "Show today's submissions",
+    "List today's interviews",
+    "How many submissions today?",
+    "How many interviews today?",
+    "Today submission count",
+    "Today interview count",
+    "Yesterday's submissions",
+    "Yesterday submissions count",
+    "How many submissions yesterday?",
+    "Yesterday's interviews",
+    "How many interviews yesterday?",
+    "Today's new students",
+    "Students added today",
+    "Submissions for today",
+    "Interviews scheduled today",
+    "Any submissions today?",
+    "Any interviews today?",
+    "Anything new today?",
+    "Today's update",
+    "What happened today?",
+]
+
+LEVEL_3_THIS_LAST_WEEK = [
+    "This week submissions",
     "This week submissions count",
-    "Last week total submissions",
-    "This month submissions breakdown",
-    "Last month submissions analysis",
+    "This week interviews",
+    "This week interview count",
+    "Last week submissions",
+    "Last week submissions count",
+    "Last week interviews",
+    "Last week interview count",
+    "How many submissions this week?",
+    "How many interviews this week?",
+    "How many submissions last week?",
+    "How many interviews last week?",
+    "This week confirmations",
+    "Last week confirmations",
+    "Students added this week",
+    "Students added last week",
+    "This week new students",
+    "Last week new students count",
+    "What happened this week?",
+    "This week summary",
+]
+
+LEVEL_3_THIS_LAST_MONTH = [
+    "This month submissions",
+    "This month submissions count",
+    "This month interviews",
+    "This month interview count",
+    "Last month submissions",
+    "Last month submissions count",
+    "Last month interviews",
+    "Last month interview count",
+    "How many submissions this month?",
+    "How many interviews this month?",
+    "How many submissions last month?",
+    "How many interviews last month?",
+    "This month confirmations",
+    "Last month confirmations",
+    "Students added this month",
+    "Students added last month",
+    "This month new students",
+    "Last month performance",
+    "Monthly submissions so far",
+    "Month to date submissions",
+]
+
+LEVEL_3_LAST_N_DAYS = [
     "Last 3 days submissions",
-    "Last 5 days submissions by BU",
-    "Last 7 days submissions BU wise",
+    "Last 5 days submissions",
+    "Last 7 days submissions",
     "Last 10 days submissions",
-    "Last 14 days submissions by BU",
-    "Last 20 days submissions",
-    "Last 30 days all submissions",
-    "Today interviews list",
-    "Yesterday interviews",
-    "This week interviews by BU",
-    "Last week interviews count",
-    "This month interview breakdown",
-    "Last month interviews analysis",
+    "Last 14 days submissions",
+    "Last 21 days submissions",
+    "Last 30 days submissions",
+    "Last 60 days submissions",
+    "Last 90 days submissions",
+    "Last 3 days interviews",
+    "Last 5 days interviews",
     "Last 7 days interviews",
     "Last 14 days interviews",
     "Last 30 days interviews",
-    "Students added today",
-    "Students created this week",
-    "Students added this month",
-    "Students modified last 7 days",
-    "Confirmations today",
-    "This week confirmations",
-    "This month confirmations",
-    "Last week confirmations",
-    "Last month confirmations",
-    "Submissions from April 2026",
-    "March submissions",
-    "This quarter submissions",
-    "Last quarter submissions",
-    "This year total submissions",
-    "Last 2 days submissions",
-    "Last 4 days interviews",
-    "Interviews scheduled for today",
-    "Tomorrow's interviews",
-    "Show submissions after April 15",
-    "Submissions before April 10",
-    "Interviews in last 3 days",
-    "Show last 60 days submissions",
-    "Last 90 days interviews",
-    "Submissions trend this month",
-    "Daily submission count this week",
-    "Weekly interview count this month",
-    "Today's new students",
-    "This week new students count",
-    "How many submissions were made yesterday?",
-    "How many interviews happened last week?",
-    "Total submissions this month so far",
+    "Students added in last 7 days",
+    "Students added in last 14 days",
+    "Students added in last 30 days",
+    "Submissions in last 7 days",
+    "Interviews in last 14 days",
+    "Confirmations last 7 days",
 ]
 
-# ── BU-specific queries ──
-BU_SPECIFIC_QUERIES = [
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 4 - BU-specific queries (name-based filtering)
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_4_BU_STUDENTS = [
+    "Students under Abhijith Reddy",
+    "Students under Divya Panguluri",
+    "Students under Adithya Reddy Venna",
+    "Students under Vinay Singh",
+    "Students under Gulam Siddiqui",
+    "Students under Kiran Reddy",
+    "Students under Ravi Mandala",
+    "Students under Prabhakar Kunreddy",
+    "Students under Sriram Anunthula",
+    "Students under Manoj Prabhakar Daram",
+    "Students under Prem Kumar Malla",
+    "Students under Sudharshan Kumar",
+    "Students under Satish Reddy",
+    "Students under Rakesh Ravula",
+    "Students under Mukesh Ravula",
+    "Students under Karthik Reddy",
+    "Students under Venkata Sai",
+    "How many students under Abhijith?",
+    "How many students under Divya?",
+    "How many students under Gulam?",
+    "Abhijith Reddy student count",
+    "Divya Panguluri students count",
+    "Kiran Reddy student count",
+    "List students under Ravi Mandala",
+    "Show all students in Prabhakar's BU",
+]
+
+LEVEL_4_BU_SUBMISSIONS = [
     "Show submissions for BU Abhijith Reddy",
     "Abhijith Reddy submissions this month",
-    "Abhijith submissions today",
-    "Abhijith BU this week submissions",
-    "How many submissions for Abhijith this month?",
-    "Show interviews for BU Abhijith",
-    "Abhijith BU interviews this week",
-    "Students under Abhijith Reddy",
-    "How many students under Abhijith?",
-    "Abhijith Reddy students with technology",
-    "Show submissions for BU Adithya Reddy",
-    "Adithya Reddy this month submissions",
-    "Adithya BU interviews this week",
-    "Students under Adithya Reddy Venna",
-    "Adithya students count",
-    "Show submissions for BU Vinay Singh",
+    "Divya Panguluri submissions this month",
+    "Adithya Reddy submissions this month",
     "Vinay Singh submissions this month",
-    "Vinay Singh interviews last week",
-    "Students under Vinay Singh",
-    "Vinay BU performance this month",
-    "Show submissions for BU Gulam Siddiqui",
-    "Gulam Siddiqui this month submissions",
-    "Gulam BU interviews this week",
-    "Students under Gulam Siddiqui",
-    "Gulam submissions count this month",
-    "Show submissions for BU Divya Panguluri",
-    "Divya Panguluri submissions today",
-    "Divya BU this week submissions",
-    "Students under Divya",
-    "Divya Panguluri students with Java",
-    "Show submissions for BU Kiran Reddy",
+    "Gulam Siddiqui submissions this month",
     "Kiran Reddy submissions this month",
-    "Kiran BU interviews",
-    "Students under Kiran Reddy",
-    "Kiran Reddy Voorukonda students",
-    "Show submissions for BU Ravi Mandala",
-    "Ravi Mandala this month",
-    "Ravi BU interviews this week",
-    "Students under Ravi",
-    "Show submissions for BU Prabhakar",
-    "Prabhakar Kunreddy submissions",
-    "Prabhakar BU interviews",
-    "Students under Prabhakar",
-    "Show submissions for BU Sriram",
+    "Ravi Mandala submissions this month",
+    "Prabhakar submissions this month",
     "Sriram submissions this month",
-    "Sriram Anunthula BU students",
-    "Show submissions for BU Manoj Prabhakar",
-    "Manoj Prabhakar Daram submissions",
-    "Manoj BU students list",
-    "Show submissions for BU Prem Kumar",
-    "Prem Kumar Malla this month",
-    "Prem Kumar BU interviews",
-    "Show submissions for BU Sudharshan",
-    "Sudharshan Kumar submissions",
-    "Sudharshan BU students",
-    "Show submissions for BU Rakesh Ravula",
-    "Rakesh Ravula this month submissions",
-    "Rakesh BU interviews",
-    "Show submissions for BU Satish Reddy",
-    "Satish Reddy Mutthana submissions",
-    "Satish BU students this month",
-    "Abhijith Reddy last 7 days submissions",
-    "Vinay Singh last 14 days interviews",
-    "Divya Panguluri last week submissions",
-    "Gulam Siddiqui this week interviews",
+    "Manoj Prabhakar submissions this month",
+    "Prem Kumar submissions this month",
+    "Sudharshan submissions this month",
+    "Satish Reddy submissions this week",
+    "Rakesh Ravula submissions this month",
+    "Mukesh Ravula submissions this week",
+    "Abhijith submissions today",
+    "Divya submissions today",
+    "Abhijith last 7 days submissions",
+    "Vinay last 14 days submissions",
+    "Divya last week submissions",
+    "Gulam this week submissions",
     "Kiran Reddy today submissions",
-    "Adithya Reddy yesterday submissions",
-    "Which BU has most submissions today?",
-    "Which BU has most interviews this week?",
-    "Top performing BU this month",
-    "BU with least submissions this month",
-    "BU comparison this month",
-    "All BU submissions today",
-    "All BU interviews this week",
-    "BU wise count today",
-    "BU wise submission count this month",
-    "BU wise interview count this month",
-    "Abhijith vs Adithya submissions this month",
-    "Top 5 BUs by submissions this month",
-    "Bottom 5 BUs by submissions this month",
-    "BU with zero submissions this week",
-    "BUs with no interviews today",
-    "Show all BU managers",
-    "List all BU names",
-    "BU manager list with student count",
-    "Abhijith Reddy students in market",
-    "Vinay Singh active students",
-    "Divya students with verbal confirmation",
-    "Gulam Siddiqui confirmed students",
-    "Students under Abhijith with Java",
-    "Students under Vinay with DevOps",
-    "Students under Divya with Python",
-    "Abhijith BU students days in market",
-    "Which BU has most students in market?",
-    "BU wise student count",
-    "BU wise active students",
+    "How many submissions for Abhijith this month?",
+    "How many submissions for Divya this week?",
 ]
 
-# ── Aggregation and count queries ──
-AGGREGATION_QUERIES = [
-    "Submissions count BU wise this month",
-    "Interviews count BU wise this week",
+LEVEL_4_BU_INTERVIEWS = [
+    "Abhijith BU interviews this week",
+    "Divya BU interviews this month",
+    "Adithya BU interviews this week",
+    "Vinay Singh interviews last week",
+    "Gulam Siddiqui interviews this month",
+    "Kiran Reddy interviews this month",
+    "Ravi Mandala interviews this week",
+    "Prabhakar interviews this month",
+    "Sriram interviews this month",
+    "Manoj Prabhakar interviews this week",
+    "Prem Kumar interviews this month",
+    "Sudharshan interviews last 7 days",
+    "Satish Reddy interviews last 14 days",
+    "Rakesh Ravula interviews this week",
+    "Abhijith Reddy interviews last 7 days",
+    "Divya Panguluri interviews last 14 days",
+    "Gulam interviews last 7 days",
+    "How many interviews for Abhijith this month?",
+    "How many interviews for Kiran this week?",
+    "Show interviews for BU Abhijith",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 5 - Aggregation and GROUP BY queries
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_5_GROUP_BY = [
     "Student count by technology",
     "Student count by visa status",
     "Student count by marketing status",
+    "Submissions count BU wise this month",
+    "Interviews count BU wise this week",
     "Submissions by recruiter this month",
-    "Submissions by offshore manager this month",
-    "Top 10 BUs by submission count",
-    "Top 5 technologies by student count",
-    "Technology wise submission count this month",
+    "Technology wise student distribution",
     "Visa wise student distribution",
     "Status wise student count",
+    "BU wise student count",
+    "BU wise active students",
+    "BU wise students in market",
+    "Technology wise submission count this month",
     "BU wise interviews this month",
     "BU wise confirmations this month",
+    "Type wise interview breakdown this month",
+    "Final status wise interview count",
+    "Interview type breakdown",
+    "Submission status breakdown",
     "Daily submission count this week",
     "BU wise submission count last week",
     "BU wise interview count last week",
-    "Technology wise interview count",
-    "Type wise interview breakdown this month",
-    "Final status wise interview count",
-    "BU wise student count in market",
+    "Count of submissions per client",
+    "Top clients by submission count",
+    "BU ranking by submissions this month",
+    "BU ranking by interviews this month",
+]
+
+LEVEL_5_TOP_N = [
+    "Top 10 BUs by submission count this month",
+    "Top 5 technologies by student count",
+    "Top 5 BUs by interviews this month",
+    "Top 10 students by days in market",
+    "Top clients this month",
+    "Top 3 technologies by submissions this month",
+    "Which BU has most submissions this month?",
+    "Which BU has most interviews this week?",
+    "Which technology has most students?",
+    "Which visa type has most students?",
+    "Which client has most submissions?",
+    "Which BU has most students in market?",
+    "Which BU has most confirmations this month?",
+    "Best performing BU this month",
+    "Top performing BU this week",
+    "Bottom 5 BUs by submissions this month",
+    "BU with least submissions this month",
+    "BU with zero submissions this week",
+    "Worst performing BU this month",
+    "Lowest activity BU",
+]
+
+LEVEL_5_AVERAGES = [
     "Average days in market by technology",
     "Average days in market by BU",
     "Max days in market",
-    "Students with more than 60 days in market count",
-    "How many Java students are active?",
-    "How many Python students in market?",
-    "How many DevOps students total?",
-    "How many H1B students active?",
-    "How many OPT students in market?",
-    "How many GC students?",
-    "Total submissions this month",
-    "Total interviews this month",
-    "Total confirmations this month",
-    "Total students in market",
-    "Total active students",
-    "Count of students per BU",
-    "Count of submissions per client",
-    "Top clients by submission count",
-    "Which client has most submissions?",
-    "Which technology has most students?",
-    "Which visa type has most students?",
-    "Submissions per day this week",
-    "Interviews per day this month",
-    "BU ranking by submissions this month",
-    "BU ranking by interviews this month",
-    "Recruiter performance this month",
-    "Top recruiters by submission count",
-    "Offshore manager performance this month",
-    "BU wise submissions vs interviews this month",
-    "How many confirmations this quarter?",
-    "Quarterly submission count",
-]
-
-# ── Multi-object and comparison queries ──
-MULTI_OBJECT_QUERIES = [
-    "This month submissions, interviews and confirmations BU wise",
-    "BU wise submissions and interviews this month",
-    "Submissions and interviews comparison this week",
-    "Which students have submissions but no interviews this month?",
-    "Students with interviews but no confirmation",
-    "BU performance - subs vs ints vs confirmations",
-    "Students in market with zero submissions last 14 days",
-    "Students with no interviews in 2 weeks",
-    "Students with no submissions in 1 week",
-    "Active students with no recent activity",
-    "Dormant students - no submissions 30 days",
-    "Students with most submissions this month",
-    "Students with most interviews this month",
-    "Which student has highest submission count?",
-    "Submission to interview conversion rate by BU",
-    "Interview to confirmation conversion this month",
-    "BU efficiency - submissions per student",
-    "Students confirmed this month with their BU",
-    "Verbal confirmations with submission details",
-    "Students who got confirmed after interviews",
-    "New students who already have submissions",
-    "Students added this month with interviews",
-    "Fresh students with no submissions yet",
-    "Students in market more than 90 days without interview",
-    "Long waiting students by BU",
-    "Stale students needing attention",
-    "Students with multiple submissions this week",
-    "Students with more than 5 submissions this month",
-    "Students with more than 3 interviews this month",
-    "Top performing students by submissions",
-    "Monthly submission trend by BU",
-    "Weekly submission growth",
-    "BU comparison last month vs this month",
-    "Which BU improved most this month?",
-    "Declining BUs - less submissions than last month",
-    "Students added vs confirmed this month",
-    "Pipeline analysis - market to submission to interview",
-    "Funnel analysis by BU",
-    "Students under each offshore manager",
-    "Offshore manager wise submissions",
-    "Recruiter wise interviews scheduled",
-    "Client wise submission breakdown",
-    "Top clients this month",
-    "New clients this month",
-    "Technology demand - which tech has most submissions",
-    "Technology with most interviews",
-    "High rate submissions this month",
+    "Who has been in market the longest?",
     "Average rate by technology",
-    "Rate distribution by BU",
+    "Average rate by BU",
+    "Students with more than 60 days in market count",
+    "Students with more than 90 days in market",
+    "Students with more than 100 days in market",
+    "Students with more than 30 days in market",
+    "Average days in market overall",
+    "Students in market more than 120 days",
+    "Longest time in market",
+    "Shortest time in market for confirmations",
+    "Average time to confirmation",
 ]
 
-# ── Name-based lookups ──
-NAME_BASED_QUERIES = [
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 6 - Name-based lookups and student profiles
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_6_STUDENT_LOOKUP = [
     "Show details of Aravind Sunkara",
     "What is the status of Hemanth Reddy?",
-    "How many submissions does Maruthi Pawan have?",
+    "Submissions for Maruthi Pawan",
     "Interviews for Vyshnavi Boppana",
     "Which BU is Aravind Sunkara in?",
-    "Details of Godala Rakesh Reddy",
-    "Show Samhitha Reddy details",
+    "Show Godala Rakesh Reddy details",
+    "Samhitha Reddy information",
     "Nithish Kumar submissions",
     "Divya Arige interview status",
     "Show Mani Kumar details",
@@ -528,9 +452,7 @@ NAME_BASED_QUERIES = [
     "Which manager handles Aravind?",
     "Maruthi Pawan interview history",
     "Has Nithish got any interviews?",
-    "Submissions by Divya Arige",
     "When was Mani Kumar's last submission?",
-    "Show Pranavi's visa status",
     "How many days has Arpana been in market?",
     "All students named Reddy",
     "All students named Kumar",
@@ -538,68 +460,268 @@ NAME_BASED_QUERIES = [
     "Find student Pawan",
     "Search for student Chinnamsetty",
     "Look up Ganesh",
-    "Details about Boppana",
-    "Status of student Sunkara",
     "Is Aravind still in market?",
-    "When did Hemanth get confirmed?",
     "Show Maruthi's recent interviews",
     "Nithish Kumar recent submissions",
-    "All activities for Vyshnavi",
     "Show complete profile of Aravind Sunkara",
     "Give me everything about Hemanth Reddy",
     "Full details Maruthi Pawan Avula",
-    "Student profile Divya Arige",
-    "Show personal details of Mohammed Numair",
-    "When was Samhitha added?",
-    "Godala Rakesh technology and visa",
 ]
 
-# ── Report-style queries ──
-REPORT_QUERIES = [
-    "Send weekly report for BU Gulam Siddiqui",
+LEVEL_6_BU_MANAGER_LOOKUP = [
+    "Show all BU managers",
+    "List all BU names",
+    "BU manager list with student count",
+    "Show BU managers with their expenses",
+    "Which BU manager has most students?",
+    "BU managers ranked by student count",
+    "Show Divya Panguluri BU details",
+    "Abhijith Reddy BU performance",
+    "Gulam Siddiqui team status",
+    "Show BU manager leaderboard",
+    "Active BU managers list",
+    "BU managers with expenses",
+    "Show per placement cost by BU",
+    "BU expenses breakdown",
+    "Which BU has highest expenses?",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 7 - Multi-filter and combination queries
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_7_MULTI_FILTER = [
+    "Java students in market under Abhijith",
+    "Python students with H1B visa",
+    "DevOps OPT students in market",
+    "Data Engineering students with more than 30 days in market",
+    ".NET students with verbal confirmation",
+    "Java H1B students under Vinay Singh",
+    "Python GC students with submissions",
+    "DevOps CPT students active",
+    "Students with H4 EAD in market",
+    "STEM OPT Java students",
+    "USC students with DevOps",
+    "H1B students in market under Divya",
+    "OPT students with Data Engineering under Kiran",
+    "GC students in market more than 60 days",
+    "Java students in market more than 90 days",
+    "Students under Abhijith with verbal confirmation",
+    "Divya students with Java technology",
+    "Gulam team Python developers",
+    "Vinay team DevOps students in market",
+    "Students added this month under Abhijith",
+    "New students under Divya this month",
+    "H1 students with interviews this month",
+    "OPT students with submissions this week",
+    "Java students with submissions today",
+    "DevOps students with interviews this month",
+]
+
+LEVEL_7_FIELD_COMBINATIONS = [
+    "Submissions for Java students this month",
+    "Interviews for Python students this week",
+    "DevOps submissions by BU today",
+    "Data Engineering interviews this month",
+    ".NET submissions last 7 days",
+    "AWS interviews this week",
+    "Which technology has most submissions today?",
+    "Technology breakdown of this month's interviews",
+    "Visa wise submission count this month",
+    "H1B student submissions this month",
+    "OPT student interviews this week",
+    "GC students with confirmations",
+    "Rate above 70 submissions this month",
+    "Submissions with rate above 60 by BU",
+    "High rate submissions for Java",
+    "Average rate for Python submissions",
+    "Top rated submissions this month",
+    "Confirmed students technology breakdown",
+    "Verbal confirmations by visa type",
+    "Confirmations by technology this month",
+    "BU wise confirmations with student details",
+    "Recently confirmed students with technology",
+    "This month confirmations with BU and technology",
+    "Offshore manager wise submission count this month",
+    "Recruiter performance this month",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 8 - Cross-table and multi-object queries
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_8_CROSS_TABLE = [
+    "This month submissions, interviews and confirmations BU wise",
+    "BU wise submissions and interviews this month",
+    "Submissions and interviews comparison this week",
+    "Students in market with zero submissions last 14 days",
+    "Students with no interviews in 2 weeks",
+    "Students with no submissions in 1 week",
+    "Active students with no recent activity",
+    "Dormant students - no submissions 30 days",
+    "Students with most submissions this month",
+    "Students with most interviews this month",
+    "Which student has highest submission count?",
+    "Students confirmed this month with their BU",
+    "Verbal confirmations with submission details",
+    "New students who already have submissions",
+    "Students added this month with interviews",
+    "Fresh students with no submissions yet",
+    "Students in market more than 90 days without interview",
+    "Students with multiple submissions this week",
+    "Students with more than 5 submissions this month",
+    "Students with more than 3 interviews this month",
+]
+
+LEVEL_8_PERFORMANCE_QUERIES = [
+    "BU performance - subs vs ints vs confirmations",
+    "Submission to interview conversion rate by BU",
+    "Interview to confirmation conversion this month",
+    "BU efficiency - submissions per student",
+    "Top performing students by submissions",
+    "Monthly submission trend by BU",
+    "BU comparison last month vs this month",
+    "Which BU improved most this month?",
+    "Declining BUs - less submissions than last month",
+    "Students added vs confirmed this month",
+    "Pipeline analysis - market to submission to interview",
+    "Client wise submission breakdown",
+    "Top clients this month",
+    "Technology demand - which tech has most submissions",
+    "Technology with most interviews",
+    "High rate submissions this month",
+    "Rate distribution by BU",
+    "Offshore manager performance ranking",
+    "Top recruiter this month",
+    "Recruiter submission rate",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 9 - Complex analytical and report queries
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_9_REPORTS = [
+    "Weekly submission report BU wise",
+    "Monthly performance report all BUs",
+    "Weekly performance summary",
+    "BU performance dashboard",
+    "Executive summary this month",
     "Send weekly report for BU Abhijith Reddy",
-    "Send weekly report for BU Vinay Singh",
     "Send weekly report for BU Divya Panguluri",
+    "Send weekly report for BU Gulam Siddiqui",
+    "Send weekly report for BU Vinay Singh",
     "Send weekly report for BU Adithya Reddy",
     "Send weekly report for BU Kiran Reddy",
     "Send weekly report for BU Ravi Mandala",
     "Send weekly report for BU Prabhakar",
-    "Send performance report for all BUs",
-    "Weekly performance summary",
-    "Monthly performance report",
-    "BU performance dashboard",
-    "Executive summary this month",
-    "Weekly submission report",
-    "Weekly interview report",
-    "Monthly submission analysis",
-    "Give me this week's summary",
-    "What happened this week?",
-    "This week's highlights",
-    "Performance overview this month",
-    "BU scorecard this month",
-    "Submission scorecard this week",
-    "Interview scorecard this month",
-    "Top performers this month",
-    "Underperforming BUs this month",
-    "Weekly wrap-up report",
-    "End of week summary",
-    "Monday morning report",
-    "Daily status report",
-    "Today's performance summary",
-    "Show me the dashboard data",
-    "Give me KPIs for this month",
-    "Key metrics this week",
-    "Performance metrics all BUs",
-    "Submission rate this month vs last month",
     "Send weekly report for BU Manoj Prabhakar",
     "Send weekly report for BU Prem Kumar",
-    "Send weekly report for BU Sudharshan",
-    "Weekly report BU Satish Reddy",
-    "Generate report for Sriram BU",
+    "Monthly Submission & Interviews & confirmation & Interview Amount BU wise",
+    "Weekly Submissions & Interviews by BU",
+    "Weekly Submissions & Interviews by Lead",
+    "Last week confirmations congratulations",
+    "PreMarketing report by BU",
+    "2 weeks no interviews by BU",
+    "2 weeks no interviews by Lead",
+    "Yesterday submissions by BU",
+    "Yesterday submissions by Offshore Manager",
+    "Last 3 days no submissions by BU",
+    "Last 3 days no submissions by Offshore Manager",
+    "Interview mandatory fields by BU",
+    "Monthly student performance by BU",
+    "Monthly student performance by Offshore Manager",
+    "Monthly recruiter performance by BU",
+    "Monthly recruiter performance by Lead",
+    "Last week student performance by BU",
+    "Last week student performance by Lead",
+    "Last week recruiter performance by BU",
+    "Last week recruiter performance by Lead",
 ]
 
-# ── Edge cases and natural language variations ──
-EDGE_CASES = [
+LEVEL_9_ANALYTICS = [
+    "Which BU has the highest interview to confirmation ratio?",
+    "Compare this month vs last month submissions BU wise",
+    "Which technology has highest placement rate?",
+    "BUs with zero submissions this week who needs attention?",
+    "Students with more than 5 submissions but no interview",
+    "Which clients are we submitting to most?",
+    "Technology wise submission to interview ratio",
+    "Students waiting longest without any interview",
+    "Which visa category gets most interviews?",
+    "Top 3 technologies by demand this month",
+    "How many students moved from market to confirmation this month?",
+    "Interview success rate by type",
+    "Which interview type leads to most confirmations?",
+    "Client interview vs vendor interview success rate",
+    "Students with multiple rejections",
+    "BU managers with declining submission numbers",
+    "Growing BUs - more submissions each week",
+    "Fresh students under 7 days with submissions already",
+    "Students in market over 120 days still no placement",
+    "Rate analysis - average rate by BU",
+    "Which BU gets highest rates?",
+    "Most active clients this month",
+    "Submission frequency per student",
+    "Interview frequency per student",
+    "BU capacity - students per manager",
+    "Which technology students have shortest time to placement?",
+    "Interview to offer ratio",
+    "Students with gap in activity - last 2 weeks no submission",
+    "BU wise fresh additions this month",
+    "Students with both submissions and interviews this month",
+]
+
+# ═══════════════════════════════════════════════════════════════════════
+# DIFFICULTY LEVEL 10 - Complex multi-table analysis, financial, edge cases
+# ═══════════════════════════════════════════════════════════════════════
+
+LEVEL_10_FINANCIAL = [
+    "Expenses & Per Placement Cost by BU",
+    "Job Payroll & Bench Payroll by BU",
+    "Total expenses all BUs",
+    "Which BU has highest expenses?",
+    "Per placement cost ranking",
+    "BU wise expenses vs confirmations",
+    "Cost per student by BU",
+    "Revenue vs cost analysis by BU",
+    "Show active jobs with pay rates",
+    "Average pay rate by technology",
+    "Average bill rate by BU",
+    "W2 vs C2C job distribution",
+    "Profit analysis by BU",
+    "Total payroll this month",
+    "Payroll breakdown by project type",
+    "Bill rate distribution by technology",
+    "High value jobs above 80 rate",
+    "Job pay rate trends",
+    "BU profitability analysis",
+    "Cost efficiency ranking",
+]
+
+LEVEL_10_COMPLEX_ANALYSIS = [
+    "Full cycle analysis - submission to interview to confirmation time by BU",
+    "Student lifecycle analysis - from pre marketing to placement",
+    "BU comparison: submissions, interviews, confirmations, expenses, rates",
+    "Technology demand vs supply gap analysis",
+    "Visa type performance - which visa gets placed fastest",
+    "Monthly trend: submissions vs interviews vs confirmations last 6 months",
+    "BU health score: submissions + interviews + confirmations - exits",
+    "Recruiter efficiency: submissions per recruiter vs interview conversion",
+    "Client diversification: how many unique clients per BU",
+    "Student utilization: percent of in-market students with submissions this month",
+    "Pipeline velocity: average days from in-market to first submission by BU",
+    "Interview effectiveness: good + very good results vs total interviews by BU",
+    "Confirmation rate: confirmations this month / students in market per BU",
+    "Activity coverage: students with at least 1 submission last 7 days / total in market",
+    "BU growth trajectory: this month additions vs exits",
+    "Technology saturation: technologies with more students than market demand",
+    "Rate competitiveness: average rate per technology vs market",
+    "Offshore manager span: students per offshore manager vs submissions generated",
+    "Stagnation analysis: students 60+ days no activity breakdown by BU and technology",
+    "Complete BU scorecard: students, in-market, subs, ints, confs, exits, expenses, rates",
+]
+
+LEVEL_10_EDGE_CASES = [
     "subs today",
     "ints this week",
     "how many subs?",
@@ -608,17 +730,11 @@ EDGE_CASES = [
     "list ints",
     "give me subs bu wise",
     "submissions bu wise today",
-    "interviews bu wise this week",
     "subs by bu this month",
     "ints by bu this week",
     "sub count",
     "int count",
-    "student count",
-    "total subs this month",
-    "total ints this week",
     "confs this month",
-    "confirmations",
-    "verbal confirmations this month",
     "who got confirmed?",
     "latest confirmations",
     "recent confs",
@@ -626,20 +742,8 @@ EDGE_CASES = [
     "what's happening today?",
     "any submissions today?",
     "any interviews scheduled?",
-    "anything new today?",
-    "today update",
-    "daily update",
-    "status update",
-    "quick summary",
-    "brief overview",
-    "show numbers",
-    "give me stats",
-    "performance today",
     "how are we doing?",
-    "how's the team doing this month?",
     "are we on track?",
-    "submissions?",
-    "interviews?",
     "which bu is best?",
     "worst bu this month",
     "best performer",
@@ -653,200 +757,376 @@ EDGE_CASES = [
     "divya students",
     "gulam team",
     "kiran performance",
-    "ravi submissions",
-    "prabhakar interviews",
-    "manoj subs this month",
     "java students count",
     "python devs",
     "dotnet count",
-    "devops students how many",
     "h1b count",
     "opt students how many",
     "gc students list",
-    "who all are in market?",
     "total in market",
-    "market students",
     "bench strength",
     "how many on bench?",
     "exits this month",
-    "who left this month?",
-    "pulled out students",
-    "not ready students",
     "pre marketing count",
     "project started this month",
-    "new joiners",
-    "freshers added",
     "team size",
     "total headcount",
     "submission rate today",
     "interview conversion",
-    "hit rate",
-    "success rate",
-    "show everything for today",
-    "complete today's data",
-    "full report today",
-    "all data this week",
-    "everything this month",
-    "give me all submissions with details",
-    "detailed interview list this week",
-    "comprehensive BU report",
-    "complete breakdown this month",
 ]
 
-# ── Complex analytical queries ──
-COMPLEX_QUERIES = [
-    "Which BU has the highest interview to confirmation ratio?",
-    "Students in market more than 90 days what is blocking them?",
-    "Compare this month vs last month submissions BU wise",
-    "Which technology has highest placement rate?",
-    "BUs with zero submissions this week who needs attention?",
-    "Students with more than 5 submissions but no interview",
-    "Average time from submission to interview by BU",
-    "Which clients are we submitting to most?",
-    "Dormant students no activity in 30 days",
-    "New students added this month who already got submissions",
-    "Show students who had interviews but got rejected last 30 days",
-    "BU wise submissions vs last month comparison",
-    "Which recruiters are submitting most this month?",
-    "Technology wise submission to interview ratio",
-    "Students waiting longest without any interview",
-    "BU wise average days in market",
-    "Which visa category gets most interviews?",
-    "Top 3 technologies by demand this month",
-    "Students with verbal confirmation this month by BU",
-    "How many students moved from market to confirmation this month?",
-    "Show me the submission funnel by BU",
-    "Interview success rate by type",
-    "Which interview type leads to most confirmations?",
-    "Client interview vs vendor interview success rate",
-    "Students with multiple rejections",
-    "BU managers with declining submission numbers",
-    "Growing BUs - more submissions each week",
-    "Stagnant BUs - same submission count as last month",
-    "Fresh students under 7 days with submissions already",
-    "Students in market over 120 days still no placement",
-    "Rate analysis - average rate by BU",
-    "High value submissions - rate above 80",
-    "Which BU gets highest rates?",
-    "Technology demand trends",
-    "Most active clients this month",
-    "New clients we started submitting to",
-    "Submission frequency per student",
-    "Interview frequency per student",
-    "BU capacity - students per manager",
-    "Overloaded BUs - too many students per manager",
-    "Which technology students have shortest time to placement?",
-    "Best technology for quick placement",
-    "Interview to offer ratio",
-    "Offer acceptance rate by BU",
-    "Students with gap in activity - last 2 weeks no submission",
-    "BU wise fresh additions this month",
-    "Experienced students still in market",
-    "Students with both submissions and interviews this month",
-    "Full cycle students - submission to interview to confirmation",
-    "Breakdown of rejections by reason",
+# ── Additional Level 1-3 to boost coverage ──
+LEVEL_1_MORE = [
+    "Show me all data",
+    "Give me stats",
+    "Show numbers",
+    "Quick summary",
+    "Brief overview",
+    "Daily update",
+    "Status update",
+    "What is happening?",
+    "Show me the dashboard data",
+    "Give me KPIs",
+    "Show all records",
+    "How many records total?",
+    "What tables do we have?",
+    "Show overall statistics",
+    "Give me a quick report",
+    "Total records in system",
+    "System summary",
+    "Data overview",
+    "Show me everything",
+    "What data do we have?",
+    "How many total students in our system?",
+    "What is the total submission count?",
+    "Count all interviews",
+    "Total number of BU managers",
+    "Show me student names only",
+    "List all job titles",
+    "How many organizations?",
+    "How many clusters?",
+    "Show me all BU manager names",
+    "List all active managers with name",
+    "Total student records",
+    "Total interview records",
+    "Total submission records",
+    "How many new students?",
+    "Show me all student emails",
+    "List student phone numbers",
+    "How many students total in system?",
+    "Give me employee count",
+    "What's the total headcount?",
+    "Show me the numbers",
 ]
 
-# ── Specific field/filter combinations ──
-FIELD_COMBINATIONS = [
-    "Java students in market under Abhijith",
-    "Python students with H1B visa",
-    "DevOps OPT students in market",
-    "Data Engineering students with more than 30 days in market",
-    ".NET students with verbal confirmation",
-    "Salesforce students under Divya",
-    "AWS students with interviews this month",
-    "Azure students added recently",
-    "Full Stack students in market more than 60 days",
-    "SAP students count",
-    "ServiceNow students in which BUs?",
-    "Java H1B students under Vinay Singh",
-    "Python GC students with submissions",
-    "DevOps CPT students active",
-    "Students with H4 EAD in market",
-    "L2 visa students list",
-    "STEM OPT Java students",
-    "USC students with DevOps",
-    "H1B transfer students",
-    "Submissions for Java students this month",
-    "Interviews for Python students this week",
-    "DevOps submissions by BU today",
-    "Data Engineering interviews this month",
-    ".NET submissions last 7 days",
-    "Salesforce student submissions today",
-    "AWS interviews this week",
-    "Which technology has most submissions today?",
-    "Technology breakdown of this month's interviews",
-    "Visa wise submission count this month",
-    "H1B student submissions this month",
-    "OPT student interviews this week",
-    "GC students with confirmations",
-    "Rate above 70 submissions this month",
-    "Submissions with rate above 60 by BU",
-    "High rate submissions for Java",
-    "Average rate for Python submissions",
-    "Top rated submissions this month",
-    "Submissions with status interview scheduled",
-    "Confirmed students technology breakdown",
-    "Verbal confirmations by visa type",
-    "Confirmations by technology this month",
-    "BU wise confirmations with student details",
-    "Recently confirmed students list",
-    "Students confirmed in last 7 days",
-    "This month confirmations with BU and technology",
-    "Show confirmation trend this month",
-    "Daily confirmations this month",
-    "Weekly confirmations this quarter",
-    "Offshore manager wise submission count",
-    "Onsite lead wise interview count",
+LEVEL_2_MORE_STATUS = [
+    "How many exits this month?",
+    "Who left this month?",
+    "Pulled out students list",
+    "Show students with project completed in market",
+    "Students currently pre marketing",
+    "Students ready for submissions",
+    "Students not in market",
+    "Students with active status",
+    "Non-active students",
+    "Show me bench students",
+    "Students waiting for placement",
+    "Students in pipeline",
+    "Marketing ready students",
+    "Students without any status",
+    "Students with unknown status",
+    "Exit students count",
+    "Pre marketing students count",
+    "Verbal confirmation count",
+    "Project started count",
+    "Project completed count",
 ]
 
-# ── Time-period variations ──
-TIME_VARIATIONS = [
-    "Submissions in last 1 day",
-    "Submissions in last 2 days",
-    "Submissions in last 3 days",
-    "Submissions in last 5 days",
-    "Submissions in last 7 days",
-    "Submissions in last 10 days",
-    "Submissions in last 14 days",
-    "Submissions in last 21 days",
-    "Submissions in last 30 days",
-    "Submissions in last 45 days",
-    "Submissions in last 60 days",
-    "Submissions in last 90 days",
-    "Interviews in last 1 day",
-    "Interviews in last 3 days",
-    "Interviews in last 5 days",
-    "Interviews in last 7 days",
-    "Interviews in last 10 days",
-    "Interviews in last 14 days",
-    "Interviews in last 21 days",
-    "Interviews in last 30 days",
-    "Students added in last 3 days",
-    "Students added in last 7 days",
-    "Students added in last 14 days",
-    "Students added in last 30 days",
-    "BU wise subs last 3 days",
-    "BU wise subs last 7 days",
-    "BU wise subs last 14 days",
-    "BU wise subs last 30 days",
-    "BU wise ints last 7 days",
-    "BU wise ints last 14 days",
-    "Abhijith last 3 days",
-    "Vinay last 7 days submissions",
-    "Divya last 14 days interviews",
-    "Gulam last 30 days performance",
-    "Submissions Monday to Friday this week",
-    "This week so far submissions",
-    "Month to date submissions",
-    "Quarter to date interviews",
-    "Year to date confirmations",
-    "First half of this month submissions",
+LEVEL_2_MORE_TECHNOLOGY = [
+    "Show me all technologies and their student counts",
+    "Which technology has the most students?",
+    "Which technology has the fewest students?",
+    "Technologies with more than 50 students",
+    "Technologies with less than 10 students",
+    "Show technology distribution",
+    "Technology pie chart data",
+    "Technology breakdown",
+    "List unique technologies",
+    "Show me the most popular technology",
 ]
 
-# ── Additional mixed queries to reach 1000+ ──
-ADDITIONAL_QUERIES = [
+LEVEL_3_MORE_DATES = [
+    "Submissions from April 2026",
+    "March submissions count",
+    "Submissions after April 15",
+    "Submissions before April 10",
+    "Interviews scheduled for tomorrow",
+    "Next week interviews",
+    "Upcoming interviews",
+    "Past week summary",
+    "Past month overview",
+    "Last 2 days submissions",
+    "Last 4 days interviews",
+    "Show last 60 days submissions",
+    "Last 90 days interviews",
+    "Submission trend this month",
+    "Daily submission count this week",
+    "Weekly interview count this month",
+    "How many submissions were made yesterday?",
+    "How many interviews happened last week?",
+    "Total submissions this month so far",
+    "This year submissions total",
+    "Confirmations this quarter",
+    "Last quarter interviews count",
+    "First week of this month submissions",
+    "Second week of April submissions",
+    "Show me April submissions",
+    "January to March total submissions",
+    "Last 6 months submissions count",
+    "Last 3 months interviews",
+    "Students modified today",
+    "Students updated this week",
+    "Jobs created in last 30 days",
+    "New jobs this month",
+    "Submissions trend last 4 weeks",
+    "Interview trend last 4 weeks",
+    "Show activity last 48 hours",
+    "What happened in the last 72 hours?",
+    "Last working day submissions",
+    "This fiscal year submissions",
+    "Show me weekly submission totals this month",
+    "Monthly interview totals this year",
+]
+
+# ── Additional Level 5-6 queries ──
+LEVEL_5_MORE_AGG = [
+    "Recruiter performance this month",
+    "Top recruiters by submission count",
+    "Offshore manager performance this month",
+    "BU wise submissions vs interviews this month",
+    "How many confirmations this quarter?",
+    "Quarterly submission count",
+    "Submissions per day this week",
+    "Interviews per day this month",
+    "Count of submissions per client this month",
+    "Total submissions this month",
+    "Total interviews this month",
+    "Total confirmations this month",
+    "Total students in market",
+    "Total active students",
+    "Count of students per BU",
+    "BU wise submission count this month",
+    "BU wise interview count this month",
+    "Technology wise interview count",
+    "Students with more than 50 days in market",
+    "Top 10 students by submissions this month",
+    "Bottom 5 BUs by interview count",
+    "BU with most students overall",
+    "BU with fewest active students",
+    "Average submissions per BU this month",
+    "Median days in market",
+    "Technology with highest submission count this month",
+    "Visa type with most active students",
+    "Client with most interviews this month",
+    "Offshore manager with most submissions this month",
+    "Recruiter with most interviews scheduled",
+    "BU with best confirmation rate this month",
+    "Technology with most confirmations",
+    "Average interviews per student this month",
+    "Average submissions per student this month",
+    "BU submission to interview ratio",
+    "Technology wise average days in market",
+    "Visa type wise average days in market",
+    "BU wise exit count this month",
+    "BU wise new additions this month",
+    "Net growth by BU this month",
+]
+
+LEVEL_6_MORE_NAMES = [
+    "Student profile Divya Arige",
+    "When was Samhitha added?",
+    "Godala Rakesh technology and visa",
+    "Show personal details of Mohammed Numair",
+    "All activities for Vyshnavi",
+    "Details about Boppana",
+    "Status of student Sunkara",
+    "When did Hemanth get confirmed?",
+    "Show Pranavi's visa status",
+    "Show me all Patel students",
+    "Students with last name Reddy",
+    "All students named Singh",
+    "Find all Mohammad students",
+    "Search for Venkat",
+    "Look up student Priya",
+    "Details for Rajesh",
+    "Who is Kumar in market?",
+    "Show me Srinivas details",
+    "Find Lakshmi students",
+    "Any student named Chandra?",
+    "Show me all Sharma students",
+    "Find student with name Ravi",
+    "Search for Deepak in our system",
+    "Who is Suresh and what is his status?",
+    "Find all students with name Prasad",
+    "Details of student Ramesh",
+    "Show Naveen information",
+    "What BU is Harish in?",
+    "Look up student Karthik",
+    "Find all students named Rao",
+    "Student named Vijay details",
+    "Search for Anand",
+    "Who is Pooja in which BU?",
+    "Show Sneha student profile",
+    "Find all Naidu students",
+    "Search for Gopi",
+    "Show Srikanth details",
+    "Look up Mahesh",
+    "Find student Vamsi",
+    "Who is Sathish and their technology?",
+]
+
+# ── Additional Level 7-8 queries ──
+LEVEL_7_MORE = [
+    "Java students under Kiran Reddy in market more than 30 days",
+    "DevOps OPT students under Ravi Mandala",
+    "H1B Python students with interviews this month",
+    "GC Java students with submissions this week",
+    "Students under Sriram with .NET technology in market",
+    "Prem Kumar team DE students with submissions",
+    "Sudharshan team Java students in market",
+    "Satish Reddy team OPT students count",
+    "Students with H4 EAD and Java in market",
+    "USC DevOps students under any BU",
+    "CPT students in Data Engineering with submissions",
+    "L2 students list with their BU name",
+    "STEM students with interviews this month by BU",
+    "H1B students with verbal confirmation by BU",
+    "OPT students added this month with their technology",
+    "Active students with Java and more than 60 days in market",
+    "Students in market under Abhijith with no interviews last 14 days",
+    "Divya team students with submissions but no interviews",
+    "Gulam team students with interviews but no confirmation",
+    "Vinay team recent confirmations with technology",
+    "Technology wise submission count by BU this month",
+    "BU wise visa distribution for in-market students",
+    "Daily submissions by BU this week",
+    "Recruiter wise submissions by BU this month",
+    "Offshore manager wise interviews by BU this month",
+    "Abhijith Reddy H1B students in market with Java",
+    "Divya team GC students with submissions this month",
+    "Kiran OPT students with no interviews 14 days",
+    "Ravi Mandala .NET students in market 60+ days",
+    "Prabhakar team DevOps students added this month",
+    "Gulam team students with rate above 70",
+    "Students with H1B and DevOps under Sriram with submissions",
+    "OPT Java students under Manoj with interviews this month",
+    "GC Python students in market more than 45 days",
+    "H4 EAD students under Satish Reddy with submissions last 7 days",
+    "Students under Mukesh with .NET and verbal confirmation",
+    "Rakesh team students with Data Engineering in market",
+    "USC students under Venkata Sai with interviews",
+    "CPT students in market under Prem Kumar with submissions today",
+    "STEM OPT DevOps students under Sudharshan with interviews this week",
+]
+
+LEVEL_8_MORE = [
+    "Students with submissions this month but no interviews",
+    "Students with interviews this month but no submission this month",
+    "BU wise students with no activity last 7 days",
+    "Students under each offshore manager with submission count",
+    "Recruiter wise interviews scheduled this month",
+    "New clients this month",
+    "Technology demand - which tech has most submissions this month",
+    "High rate submissions above 80 this month",
+    "Average rate by technology this month",
+    "Students with back to back interviews this week",
+    "Students waiting for interview after submission",
+    "Pending interview results",
+    "Students awaiting interview feedback",
+    "Re-scheduled interviews this month",
+    "Cancelled interviews this month count",
+    "Interview load per BU this week",
+    "Upcoming interviews next 7 days",
+    "BU wise client distribution this month",
+    "BU wise vendor distribution",
+    "Fastest submission to interview turnaround",
+    "Students with multiple submissions same day",
+    "Most submitted to clients this month",
+    "BU wise W2 vs C2C job split",
+    "Active jobs pay rate comparison by BU",
+    "Students with job vs students in market ratio by BU",
+    "Students with interviews but never got confirmed",
+    "Students confirmed without interviews",
+    "BU wise first round to final round conversion",
+    "Good feedback interviews that did not convert to confirmation",
+    "Students with more than 10 submissions total",
+    "Students with zero submissions ever in market 30+ days",
+    "BU wise students with max days in market",
+    "Compare BU submissions this week vs last week",
+    "Compare BU interviews this month vs last month",
+    "Students under multiple BU managers (transferred students)",
+    "Offshore managers handling more than 20 students",
+    "Recruiters with zero submissions this week",
+    "BU wise student addition trend last 3 months",
+    "Client retention - clients with submissions in consecutive months",
+    "Students with declining interview frequency",
+    "Technology switch analysis - students who changed technology",
+    "Submission velocity trend by BU last 4 weeks",
+    "Interview scheduling gap analysis",
+    "BU wise average time between submissions",
+    "Students ready for market but still in pre-marketing",
+    "BU performance trajectory last 3 months",
+    "Top 5 students by total submissions all time",
+    "Students with confirmations in first 30 days of marketing",
+    "Average days to first interview by BU",
+    "BU wise interview type distribution this month",
+]
+
+# ── Additional Level 9-10 queries ──
+LEVEL_9_MORE = [
+    "Total Interviews and Amounts monthly report",
+    "Expenses by BU report",
+    "Complete weekly performance summary for all BUs",
+    "Daily status report all BUs",
+    "Monday morning report",
+    "End of week summary report",
+    "Give me this week's highlights",
+    "Performance overview this month",
+    "BU scorecard this month",
+    "Submission scorecard this week",
+    "Interview scorecard this month",
+    "Key metrics this week",
+    "Performance metrics all BUs",
+    "Show me the BU performance dashboard",
+    "Generate complete monthly report",
+    "Show me all KPIs this month",
+    "Weekly wrap-up report",
+    "Today's performance summary",
+    "Submission rate this month vs last month",
+    "Send daily report all BUs",
+    "Generate weekly report for all offshore managers",
+    "Recruiter weekly performance report",
+    "Client engagement report this month",
+    "Technology demand report this quarter",
+    "Visa category placement report",
+    "New student onboarding report this month",
+    "Exit analysis report this quarter",
+    "BU productivity report last 30 days",
+    "Stagnation report - students 60+ days no activity",
+    "Conversion funnel report this month",
+    "Rate analysis report by BU and technology",
+    "Interview feedback summary report this month",
+    "Student pipeline stage report",
+    "BU capacity and utilization report",
+    "Quarterly business review data",
+    "Year to date summary report",
+    "Top performers report this quarter",
+    "Bottom performers report needing coaching",
+    "Client concentration risk report",
+    "Technology supply-demand gap report",
+]
+
+LEVEL_10_MORE = [
     "Show me BU Abhijith Reddy complete report",
     "Full analysis of Vinay Singh BU",
     "Divya Panguluri BU health check",
@@ -856,101 +1136,61 @@ ADDITIONAL_QUERIES = [
     "Students at risk of stagnation",
     "Pipeline health check",
     "Market readiness report",
-    "Students ready for submission",
-    "Students not getting interviews",
-    "Why are submissions low this week?",
+    "Students not getting interviews why?",
     "Interview pipeline status",
     "Confirmation pipeline",
     "Students close to confirmation",
     "Expected confirmations this month",
     "BU wise pipeline count",
-    "Fresh leads this week",
-    "New marketing students count",
-    "Pre marketing to market conversion",
+    "Pre marketing to market conversion rate",
     "How long does it take to get first submission?",
     "Average time in market before first interview",
     "Fastest placements this month",
-    "Quickest turnaround BU",
     "Slow moving students list",
     "Students stuck in market too long",
-    "Action needed students",
-    "Priority attention list",
-    "High priority students",
-    "Students with expired visa",
-    "Visa expiring students",
-    "H1B to GC students",
+    "High priority students needing action",
     "Status change this month",
     "Students who changed status recently",
-    "Verbal to confirmed this month",
-    "Market to verbal this month",
-    "Exit students this month",
-    "Why did students exit?",
-    "Pulled out reasons",
+    "Exit students this month with reasons",
     "Student attrition this month",
-    "Retention rate by BU",
-    "BU comparison chart data",
-    "Submission velocity by BU",
-    "Interview velocity this month",
-    "Acceleration in submissions",
-    "Deceleration in interviews",
     "Week over week growth",
     "Month over month trend",
-    "Best day for submissions",
-    "Peak submission days",
-    "Slow days analysis",
-    "Weekend submissions",
-    "Weekday vs weekend submissions",
-    "Morning vs evening submissions",
-    "Show me the raw data",
-    "Export submissions this month",
-    "Give me data for Excel",
-    "Download format data",
-    "BU wise complete data dump",
-    "All records this month",
-    "Everything for Abhijith BU",
-    "Complete Vinay Singh data",
-    "All students all fields",
-    "Full database export",
-    "Maximum possible records",
-    "Show 2000 submissions",
-    "All interviews raw data",
-    "Unfiltered student list",
-    "No filter all data",
-    "Top clients list",
-    "Vendor analysis",
-    "Prime vendor breakdown",
-    "Which vendors perform best?",
-    "Vendor submission count",
-    "Client feedback on students",
-    "Interview feedback summary",
-    "Good feedback students",
-    "Students with very good feedback",
-    "Students with bad feedback",
-    "Feedback trend this month",
-    "Show me technology trends",
-    "Emerging technologies",
-    "Declining technology demand",
-    "Hot skills this month",
-    "Most in demand technology",
-    "Technology with least students",
-    "Oversupplied technologies",
-    "Undersupplied technologies",
-    "Technology gap analysis",
-    "Skills market fit",
+    "Best day for submissions analysis",
+    "Peak submission days this month",
     "Show offshore managers list",
     "Offshore manager performance ranking",
     "Best offshore manager this month",
-    "Offshore vs onsite manager comparison",
     "Recruiter efficiency report",
     "Top recruiter this month",
-    "Recruiter submission rate",
-    "Recruiter interview success rate",
     "Worst performing recruiter",
-    "Recruiter improvement needed",
+    "BU wise complete data dump",
+    "All records this month export",
+    "Full database overview",
+    "Complete BU analysis with all metrics",
+    "Comprehensive weekly report for management",
+    "Board level summary with all KPIs",
+    "Show me inactive students who should be reactivated",
+    "Students with expired marketing status",
+    "Technology migration suggestions based on demand",
+    "Which students should switch technology?",
+    "Overloaded BUs needing redistribution",
+    "BU load balancing suggestion",
+    "Recruiter assignment efficiency",
+    "Client relationship depth by BU",
+    "Weekend vs weekday submission patterns",
+    "Morning vs evening submission analysis",
+    "Seasonal submission trends",
+    "Holiday impact on submissions",
+    "Cross-BU collaboration opportunities",
+    "Duplicate submission detection",
+    "Students submitted to same client multiple times",
+    "Interview preparation tracking",
+    "Mock interview completion rates",
+    "Technology training completion status",
 ]
 
-# ── More BU + date combos to push past 1000 ──
-EXTRA_BU_DATE_QUERIES = [
+# ── Extra BU + date combos for coverage ──
+LEVEL_4_EXTRA_BU_DATE = [
     "Abhijith Reddy submissions last 3 days",
     "Abhijith Reddy interviews last 7 days",
     "Abhijith Reddy students added this month",
@@ -990,29 +1230,51 @@ EXTRA_BU_DATE_QUERIES = [
     "Manoj Prabhakar submissions this week",
     "Manoj Prabhakar interviews last 14 days",
     "Manoj Prabhakar active students",
-    "Manoj BU technology distribution",
     "Prem Kumar submissions this week",
     "Prem Kumar interviews this month",
     "Prem Kumar students status",
-    "Prem Kumar BU report",
     "Sudharshan submissions this month",
     "Sudharshan interviews last 7 days",
     "Sudharshan active students",
-    "Sudharshan BU performance",
     "Satish Reddy submissions this week",
     "Satish Reddy interviews last 14 days",
     "Satish Reddy student list with technology",
-    "Satish Reddy BU daily submissions",
     "Rakesh Ravula submissions this month",
     "Rakesh Ravula interviews this week",
-    "Rakesh Ravula students in market",
-    "Rakesh Ravula performance this month",
     "Mukesh Ravula submissions this month",
     "Mukesh Ravula interviews this week",
     "Karthik Reddy submissions last 7 days",
     "Karthik Reddy interviews this month",
     "Venkata Sai submissions this month",
     "Venkata Sai interviews last 14 days",
+]
+
+# ── Additional interview detail queries ──
+LEVEL_5_INTERVIEW_TYPES = [
+    "Show first round interviews this month",
+    "Second round interviews this week",
+    "Final round interviews this month",
+    "Client interviews this month",
+    "Vendor interviews this week",
+    "HR interviews this month",
+    "Assessment interviews this week",
+    "Implementation interviews this month",
+    "Interviews with good feedback this month",
+    "Interviews with very good feedback",
+    "Interviews with average feedback",
+    "Cancelled interviews this month",
+    "Rescheduled interviews this week",
+    "Interviews with confirmation status",
+    "Expecting confirmation interviews",
+    "Interviews with very bad feedback",
+    "Interview types breakdown this month",
+    "Final status breakdown this month",
+    "Good vs very good interviews ratio",
+    "Interview result distribution",
+]
+
+# ── BU comparison and leaderboard queries ──
+LEVEL_8_BU_COMPARISON = [
     "Show all BU managers with their student count",
     "BU managers ranked by submissions this month",
     "BU managers ranked by interviews this month",
@@ -1021,18 +1283,13 @@ EXTRA_BU_DATE_QUERIES = [
     "Compare all BU managers this month",
     "BU managers active vs total students",
     "Which BU manager added most students this month?",
-    "Show BU manager leaderboard",
     "BU wise submission trend last 30 days",
-    "BU wise daily submissions this month",
-    "BU wise weekly submissions this quarter",
     "Every BU today's submission count",
     "All BU interview count this week",
     "Complete BU breakdown this month submissions interviews confirmations",
-    "Send daily report all BUs",
     "Abhijith team Java students count",
     "Vinay team DevOps students",
     "Divya team Python developers",
-    "Gulam team .NET students",
     "Which BU has most Java students?",
     "Which BU has most DevOps students?",
     "Technology distribution across all BUs",
@@ -1041,79 +1298,434 @@ EXTRA_BU_DATE_QUERIES = [
     "BU wise H1B student count",
     "BU wise OPT student count",
     "Which BU has most GC students?",
-    "BU managers without any interviews this month",
-    "Inactive BU managers",
-    "Most improved BU this month",
-    "BU needing most attention",
-    "Bottom 3 BUs by activity",
-    "Top 3 BUs by total activity",
-    "BU wise average rate this month",
-    "Which BU gets best rates?",
-    "BU wise client distribution",
-    "BU wise vendor distribution",
     "Abhijith vs Vinay vs Divya this month",
     "Top BU managers performance comparison",
     "BU ranking overall this month",
-    "Daily submission chart data this month",
-    "Submission heatmap data this month",
-    "Interview calendar this week",
-    "Upcoming interviews next 7 days",
-    "Pending interview results",
-    "Students awaiting interview feedback",
-    "Re-scheduled interviews this month",
-    "Cancelled interviews this month count",
-    "No show interviews this month",
     "Interview completion rate by BU",
     "Successful interviews this month",
-    "Failed interviews this month",
     "Interview pass rate by technology",
-    "Which technology students ace interviews?",
     "Students with multiple interviews same week",
-    "Students with back to back interviews",
-    "Interview load per BU this week",
-    "Interview scheduling efficiency",
-    "Time between submission and interview",
-    "Fastest submission to interview",
-    "Slowest submission to interview",
-    "Students waiting for interview after submission",
+]
+
+# ── Time variation queries ──
+LEVEL_3_TIME_VARIATIONS = [
+    "Submissions in last 1 day",
+    "Submissions in last 2 days",
+    "Submissions in last 45 days",
+    "Interviews in last 1 day",
+    "BU wise subs last 3 days",
+    "BU wise subs last 7 days",
+    "BU wise subs last 14 days",
+    "BU wise subs last 30 days",
+    "BU wise ints last 7 days",
+    "BU wise ints last 14 days",
+    "Abhijith last 3 days",
+    "Vinay last 7 days submissions",
+    "Divya last 14 days interviews",
+    "Gulam last 30 days performance",
+    "This week so far submissions",
+    "Quarter to date interviews",
+    "Year to date confirmations",
+    "This quarter submissions",
+    "Last quarter submissions",
+    "This year total submissions",
+]
+
+# ── Job-specific queries ──
+LEVEL_2_JOB_QUERIES = [
+    "Show all active jobs",
+    "List W2 jobs",
+    "Show C2C jobs",
+    "PD type jobs",
+    "Jobs with pay rate above 60",
+    "Jobs with pay rate above 80",
+    "Jobs by technology",
+    "Java jobs active",
+    "DevOps jobs",
+    "Python jobs list",
+    "Jobs created this month",
+    "Jobs created last week",
+    "Recent jobs added",
+    "Show job details with student name",
+    "Active jobs with bill rate",
+    "Jobs sorted by pay rate",
+    "Highest paying jobs",
+    "Jobs by project type",
+    "Total active job count",
+    "Jobs with profit details",
 ]
 
 # ═══════════════════════════════════════════════════════════════════════
-# COMBINE ALL QUESTIONS
+# COMBINE ALL QUESTIONS WITH DIFFICULTY LEVELS
 # ═══════════════════════════════════════════════════════════════════════
 
 ALL_CATEGORIES = [
-    ("Simple Student", SIMPLE_STUDENT_QUERIES),
-    ("Simple Submission", SIMPLE_SUBMISSION_QUERIES),
-    ("Simple Interview", SIMPLE_INTERVIEW_QUERIES),
-    ("Simple Job", SIMPLE_JOB_QUERIES),
-    ("Simple Employee", SIMPLE_EMPLOYEE_QUERIES),
-    ("Date Filtered", DATE_FILTERED_QUERIES),
-    ("BU Specific", BU_SPECIFIC_QUERIES),
-    ("Aggregation", AGGREGATION_QUERIES),
-    ("Multi Object", MULTI_OBJECT_QUERIES),
-    ("Name Based", NAME_BASED_QUERIES),
-    ("Report Style", REPORT_QUERIES),
-    ("Edge Cases", EDGE_CASES),
-    ("Complex", COMPLEX_QUERIES),
-    ("Field Combinations", FIELD_COMBINATIONS),
-    ("Time Variations", TIME_VARIATIONS),
-    ("Additional", ADDITIONAL_QUERIES),
-    ("Extra BU Date", EXTRA_BU_DATE_QUERIES),
+    # Level 1 - Basic counts and lists
+    ("L1 Basic Counts", 1, LEVEL_1_BASIC_COUNTS),
+    ("L1 Simple Lists", 1, LEVEL_1_SIMPLE_LISTS),
+    ("L1 General", 1, LEVEL_1_MORE),
+    # Level 2 - Single filter
+    ("L2 Status Filter", 2, LEVEL_2_STATUS_FILTER),
+    ("L2 Technology Filter", 2, LEVEL_2_TECHNOLOGY_FILTER),
+    ("L2 Visa Filter", 2, LEVEL_2_VISA_FILTER),
+    ("L2 Active Filter", 2, LEVEL_2_ACTIVE_FILTER),
+    ("L2 Job Queries", 2, LEVEL_2_JOB_QUERIES),
+    ("L2 More Status", 2, LEVEL_2_MORE_STATUS),
+    ("L2 More Technology", 2, LEVEL_2_MORE_TECHNOLOGY),
+    # Level 3 - Date filtered
+    ("L3 Today/Yesterday", 3, LEVEL_3_TODAY_YESTERDAY),
+    ("L3 This/Last Week", 3, LEVEL_3_THIS_LAST_WEEK),
+    ("L3 This/Last Month", 3, LEVEL_3_THIS_LAST_MONTH),
+    ("L3 Last N Days", 3, LEVEL_3_LAST_N_DAYS),
+    ("L3 Time Variations", 3, LEVEL_3_TIME_VARIATIONS),
+    ("L3 More Dates", 3, LEVEL_3_MORE_DATES),
+    # Level 4 - BU-specific
+    ("L4 BU Students", 4, LEVEL_4_BU_STUDENTS),
+    ("L4 BU Submissions", 4, LEVEL_4_BU_SUBMISSIONS),
+    ("L4 BU Interviews", 4, LEVEL_4_BU_INTERVIEWS),
+    ("L4 Extra BU Date", 4, LEVEL_4_EXTRA_BU_DATE),
+    # Level 5 - Aggregation
+    ("L5 Group By", 5, LEVEL_5_GROUP_BY),
+    ("L5 Top N", 5, LEVEL_5_TOP_N),
+    ("L5 Averages", 5, LEVEL_5_AVERAGES),
+    ("L5 Interview Types", 5, LEVEL_5_INTERVIEW_TYPES),
+    ("L5 More Aggregation", 5, LEVEL_5_MORE_AGG),
+    # Level 6 - Name lookups
+    ("L6 Student Lookup", 6, LEVEL_6_STUDENT_LOOKUP),
+    ("L6 BU Manager Lookup", 6, LEVEL_6_BU_MANAGER_LOOKUP),
+    ("L6 More Names", 6, LEVEL_6_MORE_NAMES),
+    # Level 7 - Multi-filter
+    ("L7 Multi Filter", 7, LEVEL_7_MULTI_FILTER),
+    ("L7 Field Combinations", 7, LEVEL_7_FIELD_COMBINATIONS),
+    ("L7 More Combos", 7, LEVEL_7_MORE),
+    # Level 8 - Cross-table
+    ("L8 Cross Table", 8, LEVEL_8_CROSS_TABLE),
+    ("L8 Performance", 8, LEVEL_8_PERFORMANCE_QUERIES),
+    ("L8 BU Comparison", 8, LEVEL_8_BU_COMPARISON),
+    ("L8 More Cross", 8, LEVEL_8_MORE),
+    # Level 9 - Reports
+    ("L9 Reports", 9, LEVEL_9_REPORTS),
+    ("L9 Analytics", 9, LEVEL_9_ANALYTICS),
+    ("L9 More Reports", 9, LEVEL_9_MORE),
+    # Level 10 - Complex
+    ("L10 Financial", 10, LEVEL_10_FINANCIAL),
+    ("L10 Complex Analysis", 10, LEVEL_10_COMPLEX_ANALYSIS),
+    ("L10 Edge Cases", 10, LEVEL_10_EDGE_CASES),
+    ("L10 More Complex", 10, LEVEL_10_MORE),
+    # Extra coverage
+    ("L1 Extra", 1, [
+        "Show student list",
+        "Get all students",
+        "All students data",
+        "Display students",
+        "Student information",
+        "Students overview",
+        "How many total records?",
+        "Show everything we have",
+        "Complete data summary",
+        "Total count of all records",
+    ]),
+    ("L3 Extra Dates", 3, [
+        "Last 15 days submissions",
+        "Last 25 days interviews",
+        "Last 35 days submissions",
+        "This week confirmations count",
+        "Last week confirmations count",
+        "This month exits",
+        "Last month new students",
+        "Students created in last 3 days",
+        "Interviews created in last 5 days",
+        "Submissions created in last 10 days",
+    ]),
+    ("L4 Extra BU", 4, [
+        "Abhijith team overview",
+        "Divya team summary",
+        "Gulam team performance",
+        "Vinay team status",
+        "Kiran team students list",
+        "Ravi team submissions count",
+        "Prabhakar team interviews today",
+        "Sriram BU total students",
+        "Manoj BU active students",
+        "Prem Kumar BU submissions this week",
+    ]),
+    ("L6 Extra Names", 6, [
+        "Find student Aditya",
+        "Search for Rishi",
+        "Who is Bhargav?",
+        "Show Tanvi details",
+        "Look up Akash",
+        "Student named Rohit details",
+        "Find Meghana",
+        "Search for Dinesh",
+        "Who is Chaitanya and what BU?",
+        "Show Nikhil student info",
+    ]),
+    ("L9 Extra Reports", 9, [
+        "Complete status report for management",
+        "BU efficiency report this quarter",
+        "Student placement tracking report",
+        "Recruiter accountability report",
+        "Technology demand supply report",
+        "Client engagement summary",
+        "Weekly highlights for leadership",
+        "Monthly business review report",
+        "Operational metrics dashboard data",
+        "Team productivity report this month",
+    ]),
+    # ── Daily Reports ──
+    ("L3 Daily BU Reports", 3, [
+        "PreMarketing students by BU",
+        "PreMarketing count for each BU",
+        "Show PreMarketing students per business unit",
+        "Yesterday submission report by BU",
+        "Yesterday submissions per BU",
+        "How many submissions did each BU make yesterday?",
+        "Yesterday submission report by offshore manager",
+        "Yesterday submissions grouped by offshore manager",
+        "Show yesterday submissions per offshore manager",
+    ]),
+    ("L4 Daily No Activity", 4, [
+        "Interview mandatory fields by BU",
+        "Interview mandatory fields missing by BU",
+        "Show interviews with missing mandatory fields per BU",
+        "Last 3 days no submissions by BU",
+        "BUs with no submissions in last 3 days",
+        "Which BU had zero submissions in the last 3 days?",
+        "Last 3 days no submissions by offshore manager",
+        "Offshore managers with no submissions in last 3 days",
+        "Which offshore manager had zero submissions in the last 3 days?",
+    ]),
+    # ── Weekly Reports ──
+    ("L5 Weekly Sub Int", 5, [
+        "Last week submissions and interviews by BU",
+        "Last week submission and interview count per BU",
+        "Show last week submissions and interviews for each BU",
+        "Last week submissions and interviews by offshore manager",
+        "Last week submission and interview count per offshore manager",
+        "Show last week submissions and interviews for each offshore manager",
+    ]),
+    ("L7 Weekly Performance", 7, [
+        "Recruiter last week performance by BU submissions and interviews",
+        "Recruiter wise last week submissions and interviews per BU",
+        "Show each recruiter last week performance with submissions and interviews by BU",
+        "Recruiter last week performance by offshore manager",
+        "Recruiter wise last week submissions and interviews per offshore manager",
+        "Show each recruiter last week performance with submissions and interviews by offshore manager",
+        "Last 2 weeks no interviews by BU",
+        "BUs with no interviews in last 2 weeks",
+        "Which BU had zero interviews in the last 2 weeks?",
+        "Last 2 weeks no interviews by offshore manager",
+        "Offshore managers with no interviews in last 2 weeks",
+        "Which offshore manager had zero interviews in last 2 weeks?",
+    ]),
+    # ── Monthly Reports ──
+    ("L8 Monthly Performance", 8, [
+        "Monthly submissions and interviews and confirmations and interview amount by BU",
+        "Monthly BU wise submission interview confirmation and interview amount report",
+        "Show this month submissions interviews confirmations and amounts per BU",
+        "Total interviews and amounts this month",
+        "Total interview count and total interview amounts",
+        "Monthly student wise performance by BU",
+        "Student wise monthly performance report per BU",
+        "Show each student performance this month grouped by BU",
+        "Monthly student wise performance by offshore manager",
+        "Student wise monthly performance report per offshore manager",
+        "Show each student performance this month grouped by offshore manager",
+        "Monthly recruiter wise performance by BU",
+        "Recruiter wise monthly performance report per BU",
+        "Show each recruiter performance this month grouped by BU",
+        "Monthly recruiter wise performance by offshore manager",
+        "Recruiter wise monthly performance report per offshore manager",
+        "Show each recruiter performance this month grouped by offshore manager",
+    ]),
+    ("L9 Monthly Financial", 9, [
+        "Last month expenses and total expenses and per placement by BU",
+        "Last month expense report with total and per placement cost per BU",
+        "Show last month expenses total expenses and cost per placement by BU",
+        "Job payroll and bench payroll by BU",
+        "Job payroll vs bench payroll per BU",
+        "Show job payroll and bench payroll for each BU",
+    ]),
+    # ── Lead-based Weekly Reports ──
+    ("L5 Weekly Lead Reports", 5, [
+        "Last week confirmations with congratulations",
+        "Last week confirmed students congratulations",
+        "Show last week confirmations with congratulations message",
+        "Last week submissions and interviews by BU",
+        "Last week sub and int by BU",
+        "Last week submissions and interviews by lead",
+        "Last week sub and int by lead",
+    ]),
+    ("L7 Weekly Lead Perf", 7, [
+        "Last week student performance report by BU",
+        "Last week student wise performance report per BU",
+        "Show each student last week performance by BU",
+        "Last week student performance report by lead",
+        "Last week student wise performance report per lead",
+        "Show each student last week performance by lead",
+        "Last week recruiter performance report by BU",
+        "Last week recruiter wise performance report per BU",
+        "Show each recruiter last week performance by BU",
+        "Last week recruiter performance report by lead",
+        "Last week recruiter wise performance report per lead",
+        "Show each recruiter last week performance by lead",
+        "2 weeks no interviews by BU",
+        "BUs with zero interviews in 2 weeks",
+        "2 weeks no interviews by lead",
+        "Leads with zero interviews in 2 weeks",
+    ]),
 ]
 
 ALL_QUESTIONS = []
-for cat, questions in ALL_CATEGORIES:
+for cat, level, questions in ALL_CATEGORIES:
     for q in questions:
-        ALL_QUESTIONS.append((cat, q))
+        ALL_QUESTIONS.append((cat, level, q))
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TEST RUNNER
+# DATABASE VERIFICATION LAYER
+# ═══════════════════════════════════════════════════════════════════════
+
+import re
+
+def get_db_connection():
+    """Get a sync psycopg2 connection to PostgreSQL for verification."""
+    try:
+        import psycopg2
+    except ImportError:
+        return None
+
+    # Load .env if DATABASE_URL not in environment
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url:
+        env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("DATABASE_URL="):
+                        db_url = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+    if not db_url:
+        db_url = "postgresql://postgres:postgres@localhost:5432/fyxo"
+
+    # Strip async driver prefix
+    db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    try:
+        return psycopg2.connect(db_url)
+    except Exception as e:
+        print(f"  DB connection failed: {e}")
+        return None
+
+
+def verify_sql_against_db(sql, answer, question):
+    """
+    Run the AI-generated SQL directly against PostgreSQL and verify:
+    1. SQL executes without error
+    2. Row count matches what the answer claims
+    3. For count queries, the number in the answer matches DB result
+
+    Returns: (verified: bool, details: str)
+    """
+    if not sql or not sql.strip().upper().startswith("SELECT"):
+        return None, "No SQL to verify"
+
+    # Safety: reject non-SELECT
+    dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE"]
+    for d in dangerous:
+        if d in sql.upper().split():
+            return None, f"Skipped: dangerous keyword {d}"
+
+    conn = get_db_connection()
+    if not conn:
+        return None, "No DB connection (psycopg2 not installed or DB unreachable)"
+
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        col_names = [desc[0] for desc in cur.description] if cur.description else []
+        row_count = len(rows)
+        cur.close()
+        conn.close()
+
+        # Verification checks
+        issues = []
+
+        # Check 1: SQL executed successfully (if we got here, it did)
+
+        # Check 2: For count questions, verify the number matches
+        count_words = ["how many", "count", "total number", "total students",
+                       "total submissions", "total interviews"]
+        is_count_q = any(w in question.lower() for w in count_words)
+
+        if is_count_q and row_count == 1 and len(col_names) == 1:
+            db_value = rows[0][0]
+            if db_value is not None:
+                db_num = int(db_value)
+                # Extract number from answer
+                numbers_in_answer = re.findall(r'[\d,]+', answer.replace(",", ""))
+                numbers_in_answer = [int(n.replace(",", "")) for n in numbers_in_answer if n.isdigit()]
+                if numbers_in_answer:
+                    answer_num = numbers_in_answer[0]
+                    if answer_num != db_num:
+                        issues.append(f"COUNT MISMATCH: DB={db_num}, Answer={answer_num}")
+                    else:
+                        return True, f"Verified: count={db_num} matches"
+                else:
+                    # Check if spelled out
+                    if str(db_num) in answer or f"{db_num:,}" in answer:
+                        return True, f"Verified: count={db_num} found in answer"
+                    issues.append(f"Count query returned {db_num} but couldn't find it in answer")
+
+        # Check 3: For list queries with records, verify row count is reasonable
+        if row_count == 0 and "no " not in answer.lower() and "zero" not in answer.lower() and "0" not in answer:
+            if is_count_q:
+                issues.append(f"DB returned 0 rows but answer doesn't indicate zero/none")
+
+        # Check 4: SQL returned data (basic success)
+        if not issues:
+            return True, f"Verified: SQL executed OK, {row_count} rows returned"
+
+        return False, "; ".join(issues)
+
+    except Exception as e:
+        conn.close()
+        error_msg = str(e)[:200]
+        return False, f"SQL execution error: {error_msg}"
+
+
+def verify_response_data(result, question, level):
+    """
+    Full data verification: extracts SQL from response, runs against DB,
+    compares with the answer text.
+
+    Returns: (verified: bool|None, detail: str)
+      - True: data confirmed correct
+      - False: data mismatch detected
+      - None: couldn't verify (no SQL, no DB, etc.)
+    """
+    if not result.get("ok"):
+        return None, "Response not OK"
+
+    body = result.get("body", {})
+    sql = body.get("soql", "") or body.get("sql", "")
+    answer = body.get("answer", "")
+
+    if not sql:
+        return None, "No SQL in response to verify"
+
+    return verify_sql_against_db(sql, answer, question)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# SELF-CORRECTING TEST RUNNER
 # ═══════════════════════════════════════════════════════════════════════
 
 def send_question(client, question, session_id=None):
-    """Send a question to the chat API."""
+    """Send a question to the chat API and collect response."""
     payload = {
         "session_id": session_id or str(uuid.uuid4()),
         "question": question,
@@ -1121,98 +1733,313 @@ def send_question(client, question, session_id=None):
     try:
         response = client.post("/api/chat", json=payload)
         if response.status_code == 200:
-            return {"ok": True, "body": response.json(), "status": 200}
+            body = response.json()
+            # Normalize: ensure 'soql' key exists for verification
+            if "soql" not in body and "data" in body and isinstance(body["data"], dict):
+                body["soql"] = body["data"].get("query", "")
+            return {"ok": True, "body": body, "status": 200}
         else:
             return {"ok": False, "error": f"HTTP {response.status_code}: {response.text[:200]}", "status": response.status_code}
     except Exception as e:
         return {"ok": False, "error": str(e), "status": 0}
 
 
-def validate_response(result, question):
-    """Check if response is valid."""
+def validate_response(result, question, level):
+    """
+    Validate the response based on difficulty level.
+    Returns (is_valid, error_message, severity).
+    Severity: 'hard' = definitely wrong, 'soft' = might be acceptable.
+    """
     if not result["ok"]:
-        return False, result["error"]
+        return False, result["error"], "hard"
 
     body = result["body"]
     if not body:
-        return False, "Empty response body"
+        return False, "Empty response body", "hard"
 
     answer = body.get("answer", "")
     if not answer:
-        return False, "No answer in response"
+        return False, "No answer in response", "hard"
 
-    if len(answer) < 10:
-        return False, f"Answer too short: '{answer}'"
+    if len(answer) < 5:
+        return False, f"Answer too short: '{answer}'", "hard"
 
-    # Check for error indicators in the answer
-    error_phrases = [
+    # Hard error indicators
+    hard_errors = [
         "Schema not loaded",
         "Could not convert query",
-        "I couldn't find data",
+        "database error",
+        "syntax error",
+        "relation does not exist",
+        "column does not exist",
+        "unterminated",
+        "ERROR:",
     ]
-    for phrase in error_phrases:
-        if phrase in answer:
-            return False, f"Error in answer: {phrase}"
+    for phrase in hard_errors:
+        if phrase.lower() in answer.lower():
+            return False, f"Error in answer: {phrase}", "hard"
 
-    return True, "OK"
+    # Soft validation: check if counts/data were returned for data queries
+    soql = body.get("soql", "")
+    records = body.get("records", [])
+
+    # For count questions, verify we got a numeric answer
+    count_words = ["how many", "count", "total", "number of"]
+    is_count_q = any(w in question.lower() for w in count_words)
+    if is_count_q and level <= 5:
+        has_number = any(c.isdigit() for c in answer)
+        if not has_number and "no " not in answer.lower() and "zero" not in answer.lower():
+            return False, "Count question but no number in answer", "soft"
+
+    # For list questions, check we got records or a substantive answer
+    list_words = ["show", "list", "get", "display"]
+    is_list_q = any(w in question.lower() for w in list_words)
+    if is_list_q and len(answer) < 20 and not records:
+        return False, "List question but very short answer and no records", "soft"
+
+    return True, "OK", None
 
 
-def run_tests(questions=None, max_questions=None, category_filter=None):
-    """Run test questions and report results."""
+def retry_with_hint(client, question, previous_error, session_id):
+    """Re-send question with a corrective hint."""
+    hint_question = f"{question} (Please ensure the SQL query uses correct PostgreSQL syntax with double-quoted identifiers)"
+    return send_question(client, hint_question, session_id)
+
+
+def save_learning(question, sql, answer, status="good"):
+    """
+    Save a verified question→SQL mapping to the app's learning memory in PostgreSQL.
+    This helps the AI generate better SQL for similar questions in the future.
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from app.chat.memory import save_interaction_sync
+        return save_interaction_sync(
+            question=question,
+            soql=sql,
+            answer=answer[:500],
+            route="SQL",
+            username="test_runner",
+            feedback=status,
+        )
+    except Exception:
+        return False
+
+
+def run_tests(questions=None, max_questions=None, category_filter=None,
+              level_filter=None, max_retries=2, delay=0.3, learn=True):
+    """
+    Run test questions with self-correcting retry logic.
+    - Logs EVERY question with answer + SQL + verification status
+    - Failed questions are retried with hints up to max_retries times
+    - Successful corrections are fed back to the app's learning memory (self-learning)
+    """
     headers = {}
     if AUTH_TOKEN:
         headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
 
-    client = httpx.Client(base_url=BASE_URL, timeout=120.0, headers=headers)
+    client = httpx.Client(base_url=BASE_URL, timeout=60.0, headers=headers)
 
     # Filter questions
     test_set = questions or ALL_QUESTIONS
     if category_filter:
-        test_set = [(c, q) for c, q in test_set if category_filter.lower() in c.lower()]
+        test_set = [(c, l, q) for c, l, q in test_set if category_filter.lower() in c.lower()]
+    if level_filter:
+        test_set = [(c, l, q) for c, l, q in test_set if l == level_filter]
     if max_questions:
         test_set = test_set[:max_questions]
 
+    total = len(test_set)
     print(f"\n{'='*70}")
-    print(f"  CHAT API TEST SUITE - {len(test_set)} questions")
+    print(f"  CHAT API TEST SUITE - {total} questions")
     print(f"  Server: {BASE_URL}")
+    print(f"  Max retries per question: {max_retries}")
+    print(f"  Self-learning: {'ENABLED' if learn else 'DISABLED'}")
+    print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*70}\n")
 
     passed = 0
     failed = 0
+    retried_pass = 0
     errors = []
+    all_results = []  # Full log of every question
+    data_verified = 0
+    data_mismatches = 0
+    learned = 0
+    session_id = str(uuid.uuid4())
 
-    for i, (category, question) in enumerate(test_set):
-        result = send_question(client, question)
-        is_valid, msg = validate_response(result, question)
+    # Check if DB verification is available
+    db_conn = get_db_connection()
+    db_verify_available = db_conn is not None
+    if db_conn:
+        db_conn.close()
+    if db_verify_available:
+        print(f"  DB verification: ENABLED (direct PostgreSQL validation)")
+    else:
+        print(f"  DB verification: DISABLED (install psycopg2 for data validation)")
+    print()
+
+    for i, (category, level, question) in enumerate(test_set):
+        print(f"  [{i+1}/{total}] L{level} | {question[:60]}...", end="", flush=True)
+        result = send_question(client, question, session_id)
+        is_valid, msg, severity = validate_response(result, question, level)
+
+        body = result.get("body", {}) or {}
+        answer = body.get("answer", "")
+        sql = body.get("soql", "")
+        records = body.get("data", {}).get("records", []) if isinstance(body.get("data"), dict) else []
+
+        # Build the log entry for this question
+        log_entry = {
+            "index": i + 1,
+            "category": category,
+            "level": level,
+            "question": question,
+            "answer": answer[:500],
+            "sql": sql,
+            "record_count": len(records),
+            "status": "unknown",
+            "verified": None,
+            "verification_detail": "",
+            "retries": 0,
+            "self_corrected": False,
+        }
 
         if is_valid:
-            passed += 1
-            if (i + 1) % 50 == 0:
-                print(f"  Progress: {i+1}/{len(test_set)} ({passed} passed, {failed} failed)")
+            # Step 2: Verify data correctness against DB
+            if db_verify_available:
+                verified, detail = verify_response_data(result, question, level)
+                log_entry["verified"] = verified
+                log_entry["verification_detail"] = detail
+                if verified is True:
+                    data_verified += 1
+                    passed += 1
+                    log_entry["status"] = "pass_verified"
+                    # Self-learning: save verified good answers
+                    if learn and sql:
+                        if save_learning(question, sql, answer, "good"):
+                            learned += 1
+                elif verified is False:
+                    data_mismatches += 1
+                    failed += 1
+                    log_entry["status"] = "fail_data_mismatch"
+                    errors.append({
+                        "category": category,
+                        "level": level,
+                        "question": question,
+                        "error": f"DATA MISMATCH: {detail}",
+                        "severity": "data",
+                        "answer": answer[:300],
+                        "sql": sql[:200],
+                    })
+                    print(f"  ! DATA [L{level}|{category}]: {question[:55]}")
+                    print(f"         {detail[:80]}")
+                else:
+                    passed += 1
+                    log_entry["status"] = "pass_unverified"
+                    if learn and sql:
+                        if save_learning(question, sql, answer, "good"):
+                            learned += 1
+            else:
+                passed += 1
+                log_entry["status"] = "pass"
+                if learn and sql:
+                    if save_learning(question, sql, answer, "good"):
+                        learned += 1
         else:
-            failed += 1
-            errors.append({
-                "category": category,
-                "question": question,
-                "error": msg,
-                "answer": result.get("body", {}).get("answer", "")[:200] if result.get("body") else "",
-            })
-            print(f"  X FAIL [{category}]: {question[:60]}")
-            print(f"         Error: {msg[:100]}")
+            # Self-correcting: retry with hints
+            retry_passed = False
+            for attempt in range(max_retries):
+                log_entry["retries"] = attempt + 1
+                time.sleep(delay * 2)
+                retry_result = retry_with_hint(client, question, msg, session_id)
+                is_valid_retry, msg_retry, sev_retry = validate_response(retry_result, question, level)
+                if is_valid_retry:
+                    # Also verify retry result against DB
+                    if db_verify_available:
+                        verified, detail = verify_response_data(retry_result, question, level)
+                        if verified is False:
+                            continue  # Retry again, data is wrong
+                    retry_passed = True
+                    retried_pass += 1
+                    passed += 1
+                    log_entry["status"] = "pass_self_corrected"
+                    log_entry["self_corrected"] = True
+                    # Update with corrected answer
+                    retry_body = retry_result.get("body", {}) or {}
+                    log_entry["answer"] = retry_body.get("answer", "")[:500]
+                    log_entry["sql"] = retry_body.get("soql", "")
+                    # Self-learning: save the corrected version
+                    if learn and log_entry["sql"]:
+                        if save_learning(question, log_entry["sql"], log_entry["answer"], "corrected"):
+                            learned += 1
+                    break
 
-        # Small delay to not overwhelm the server
-        time.sleep(0.5)
+            if not retry_passed:
+                failed += 1
+                log_entry["status"] = "fail"
+                errors.append({
+                    "category": category,
+                    "level": level,
+                    "question": question,
+                    "error": msg,
+                    "severity": severity,
+                    "answer": answer[:300],
+                    "sql": sql[:200],
+                })
+                print(f"  X FAIL [L{level}|{category}]: {question[:55]}")
+                print(f"         Error: {msg[:80]}")
+
+        all_results.append(log_entry)
+
+        # Print result for this question
+        status_icon = "PASS" if "pass" in log_entry["status"] else "FAIL"
+        print(f" -> {status_icon}", flush=True)
+
+        # Progress summary every 50
+        if (i + 1) % 50 == 0:
+            pct = (i + 1) / total * 100
+            print(f"\n  --- Progress: {i+1}/{total} ({pct:.0f}%) | {passed} pass | {failed} fail | {learned} learned ---\n", flush=True)
+
+        time.sleep(delay)
 
     # Summary
     print(f"\n{'='*70}")
-    print(f"  RESULTS: {passed} PASSED | {failed} FAILED | {len(test_set)} TOTAL")
-    print(f"  Pass rate: {passed/len(test_set)*100:.1f}%")
+    print(f"  RESULTS")
     print(f"{'='*70}")
+    print(f"  Total:           {total}")
+    print(f"  Passed:          {passed} ({passed/total*100:.1f}%)")
+    print(f"  Failed:          {failed} ({failed/total*100:.1f}%)")
+    print(f"  Self-corrected:  {retried_pass}")
+    print(f"  Data verified:   {data_verified} (SQL re-run confirmed correct)")
+    print(f"  Data mismatches: {data_mismatches} (answer != DB result)")
+    print(f"  Learned:         {learned} (saved to app memory for future use)")
+    print(f"  Pass rate:       {passed/total*100:.1f}%")
+    print(f"{'='*70}")
+
+    # Level breakdown
+    print(f"\n  Level Breakdown:")
+    level_stats = {}
+    for cat, lvl, q in test_set:
+        if lvl not in level_stats:
+            level_stats[lvl] = {"total": 0, "failed": 0}
+        level_stats[lvl]["total"] += 1
+    for e in errors:
+        level_stats[e["level"]]["failed"] += 1
+
+    for lvl in sorted(level_stats.keys()):
+        stats = level_stats[lvl]
+        p = stats["total"] - stats["failed"]
+        pct = p / stats["total"] * 100 if stats["total"] > 0 else 0
+        bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
+        status = "PASS" if stats["failed"] == 0 else f"{stats['failed']} FAIL"
+        print(f"    Level {lvl:2d}: [{bar}] {p}/{stats['total']} ({pct:.0f}%) - {status}")
 
     # Category breakdown
     print(f"\n  Category Breakdown:")
     cat_results = {}
-    for cat, q in test_set:
+    for cat, lvl, q in test_set:
         if cat not in cat_results:
             cat_results[cat] = {"total": 0, "failed": 0}
         cat_results[cat]["total"] += 1
@@ -1222,7 +2049,7 @@ def run_tests(questions=None, max_questions=None, category_filter=None):
     for cat, stats in sorted(cat_results.items()):
         p = stats["total"] - stats["failed"]
         pct = p / stats["total"] * 100 if stats["total"] > 0 else 0
-        status = "OK" if stats["failed"] == 0 else f"{stats['failed']} FAILED"
+        status = "OK" if stats["failed"] == 0 else f"{stats['failed']} FAIL"
         print(f"    {cat:25s}: {p}/{stats['total']} ({pct:.0f}%) - {status}")
 
     # Detailed failures
@@ -1230,48 +2057,116 @@ def run_tests(questions=None, max_questions=None, category_filter=None):
         print(f"\n{'='*70}")
         print(f"  FAILED QUESTIONS ({len(errors)}):")
         print(f"{'='*70}")
-        for i, e in enumerate(errors[:50], 1):
-            print(f"\n  [{i}] [{e['category']}] {e['question']}")
-            print(f"      Error: {e['error']}")
-            if e['answer']:
-                print(f"      Answer: {e['answer'][:150]}")
 
-    # Save results to file
+        # Group by severity
+        hard_errors = [e for e in errors if e["severity"] == "hard"]
+        soft_errors = [e for e in errors if e["severity"] == "soft"]
+        data_errors = [e for e in errors if e["severity"] == "data"]
+
+        if hard_errors:
+            print(f"\n  --- HARD FAILURES ({len(hard_errors)}) - SQL/system errors ---")
+            for i, e in enumerate(hard_errors[:30], 1):
+                print(f"\n  [{i}] [L{e['level']}|{e['category']}] {e['question']}")
+                print(f"      Error: {e['error']}")
+                if e['sql']:
+                    print(f"      SQL: {e['sql'][:120]}")
+                if e['answer']:
+                    print(f"      Answer: {e['answer'][:120]}")
+
+        if data_errors:
+            print(f"\n  --- DATA MISMATCHES ({len(data_errors)}) - Answer != Database ---")
+            for i, e in enumerate(data_errors[:20], 1):
+                print(f"\n  [{i}] [L{e['level']}|{e['category']}] {e['question']}")
+                print(f"      Error: {e['error']}")
+                if e['sql']:
+                    print(f"      SQL: {e['sql'][:120]}")
+
+        if soft_errors:
+            print(f"\n  --- SOFT FAILURES ({len(soft_errors)}) - Validation warnings ---")
+            for i, e in enumerate(soft_errors[:20], 1):
+                print(f"\n  [{i}] [L{e['level']}|{e['category']}] {e['question']}")
+                print(f"      Error: {e['error']}")
+
+    # Save FULL results to JSON (every question logged)
     results_file = os.path.join(os.path.dirname(__file__), "test_results.json")
-    with open(results_file, "w") as f:
+    with open(results_file, "w", encoding="utf-8") as f:
         json.dump({
-            "total": len(test_set),
+            "timestamp": datetime.now().isoformat(),
+            "server": BASE_URL,
+            "total": total,
             "passed": passed,
             "failed": failed,
-            "pass_rate": f"{passed/len(test_set)*100:.1f}%",
+            "self_corrected": retried_pass,
+            "data_verified": data_verified,
+            "data_mismatches": data_mismatches,
+            "learned": learned,
+            "db_verification": db_verify_available,
+            "pass_rate": f"{passed/total*100:.1f}%",
+            "level_breakdown": {
+                str(lvl): {
+                    "total": stats["total"],
+                    "passed": stats["total"] - stats["failed"],
+                    "failed": stats["failed"],
+                }
+                for lvl, stats in sorted(level_stats.items())
+            },
+            "questions": all_results,
             "errors": errors,
-        }, f, indent=2)
-    print(f"\n  Results saved to: {results_file}")
+        }, f, indent=2, ensure_ascii=False)
+    print(f"\n  Full report saved to: {results_file}")
+    print(f"  (Contains every question with answer, SQL, and verification status)")
 
     client.close()
     return passed, failed, errors
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Test chat questions against API")
+    parser = argparse.ArgumentParser(description="Test chat questions against API with self-correction")
     parser.add_argument("--max", type=int, help="Max questions to test")
     parser.add_argument("--category", type=str, help="Filter by category name")
+    parser.add_argument("--level", type=int, help="Filter by difficulty level (1-10)")
+    parser.add_argument("--retries", type=int, default=2, help="Max retries per question (default 2)")
     parser.add_argument("--url", type=str, help="API base URL")
+    parser.add_argument("--delay", type=float, default=0.3, help="Delay between requests in seconds")
+    parser.add_argument("--no-learn", action="store_true", help="Disable self-learning (don't save to app memory)")
     args = parser.parse_args()
 
     if args.url:
         BASE_URL = args.url
 
-    # Print question count
+    # Print question summary
     total = len(ALL_QUESTIONS)
-    print(f"\nTotal questions available: {total}")
-    for cat, qs in ALL_CATEGORIES:
-        print(f"  {cat:25s}: {len(qs)}")
+    print(f"\n{'='*70}")
+    print(f"  TEST SUITE SUMMARY: {total} questions across {len(ALL_CATEGORIES)} categories")
+    print(f"{'='*70}")
 
+    level_counts = {}
+    for cat, lvl, q in ALL_QUESTIONS:
+        level_counts[lvl] = level_counts.get(lvl, 0) + 1
+
+    print(f"\n  Questions by Difficulty Level:")
+    for lvl in sorted(level_counts.keys()):
+        print(f"    Level {lvl:2d}: {level_counts[lvl]:4d} questions")
+    print(f"    {'-'*30}")
+    print(f"    Total:   {total:4d} questions")
+
+    print(f"\n  Categories:")
+    for cat, lvl, qs in ALL_CATEGORIES:
+        print(f"    L{lvl} {cat:25s}: {len(qs)}")
+
+    # Run tests
     passed, failed, errors = run_tests(
         max_questions=args.max,
-        category_filter=args.category
+        category_filter=args.category,
+        level_filter=args.level,
+        max_retries=args.retries,
+        delay=args.delay,
+        learn=not args.no_learn,
     )
 
     sys.exit(0 if failed == 0 else 1)

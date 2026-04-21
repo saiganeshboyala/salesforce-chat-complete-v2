@@ -1,4 +1,4 @@
-"""Per-user alert rules that watch SOQL results against thresholds."""
+"""Per-user alert rules that watch SQL query results against thresholds."""
 import json
 import logging
 import uuid

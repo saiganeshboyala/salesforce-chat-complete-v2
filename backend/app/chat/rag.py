@@ -1,8 +1,8 @@
 """
 RAG Module — OpenAI Embeddings + Qdrant Vector Search
 
-This adds semantic search on top of SOQL:
-- SOQL: "show students with Verbal Confirmation" → exact WHERE filter
+This adds semantic search on top of SQL:
+- SQL: "show students with Verbal Confirmation" → exact WHERE filter
 - RAG:  "find students like Adithya who are doing well" → semantic similarity
 
 Uses OpenAI text-embedding-3-small (fast, cheap, 1536 dimensions).

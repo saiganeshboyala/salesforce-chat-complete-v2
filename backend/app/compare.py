@@ -1,19 +1,21 @@
-"""Comparison mode — execute two SOQL queries and summarize the delta."""
+"""Comparison mode — execute two SQL queries and summarize the delta."""
 import logging
 
 from app.chat.ai_engine import _call_ai
-from app.salesforce.soql_executor import execute_soql
+from app.database.query import execute_query
 
 logger = logging.getLogger(__name__)
 
 
-COMPARE_PROMPT = """You are a SOQL expert. Given a comparison question, return TWO SOQL queries \
+COMPARE_PROMPT = """You are a PostgreSQL SQL expert. Given a comparison question, return TWO SQL queries \
 (one for each period or group) as JSON: {"query1":"...","label1":"...","query2":"...","label2":"..."}. \
-Only output the JSON object, nothing else. Use aggregate queries (COUNT, SUM, GROUP BY) when possible."""
+Only output the JSON object, nothing else. Use aggregate queries (COUNT, SUM, GROUP BY) when possible.
+CRITICAL: All table and column names MUST be double-quoted (case-sensitive PostgreSQL).
+Use PostgreSQL date functions: CURRENT_DATE, DATE_TRUNC(), INTERVAL."""
 
 
 def _records_total(result: dict) -> float:
-    """Pick a single comparable number from a SOQL result."""
+    """Pick a single comparable number from a SQL result."""
     if "error" in result:
         return 0
     records = result.get("records") or []
@@ -29,8 +31,8 @@ def _records_total(result: dict) -> float:
 
 
 async def run_compare(query1: str, query2: str, label1: str = "A", label2: str = "B") -> dict:
-    r1 = await execute_soql(query1)
-    r2 = await execute_soql(query2)
+    r1 = await execute_query(query1)
+    r2 = await execute_query(query2)
     v1 = _records_total(r1)
     v2 = _records_total(r2)
     diff = v2 - v1

@@ -78,7 +78,7 @@ def build_pdf(
         rightMargin=0.75 * inch,
         topMargin=0.9 * inch,
         bottomMargin=0.9 * inch,
-        title=title or "Salesforce Data Report",
+        title=title or "Fyxo Data Report",
     )
 
     styles = getSampleStyleSheet()
@@ -109,7 +109,7 @@ def build_pdf(
     )
 
     story = []
-    story.append(Paragraph("Salesforce Data Report", h_title))
+    story.append(Paragraph("Fyxo Data Report", h_title))
     ts = datetime.now().strftime("%B %d, %Y · %I:%M %p")
     story.append(Paragraph(f"Generated for <b>{_escape(username)}</b> · {ts}", h_sub))
 
@@ -124,7 +124,7 @@ def build_pdf(
             story.append(Spacer(1, 4))
 
     if soql:
-        story.append(Paragraph("SOQL Query", h_section))
+        story.append(Paragraph("SQL Query", h_section))
         story.append(Paragraph(_escape(soql), p_mono))
 
     if records:

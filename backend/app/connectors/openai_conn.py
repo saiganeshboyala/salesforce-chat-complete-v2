@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 NAME = "openai"
 DISPLAY_NAME = "OpenAI"
-DESCRIPTION = "GPT-4o for analytics, SOQL generation, and chat answers."
+DESCRIPTION = "GPT-4o for analytics, SQL generation, and chat answers."
 
 
 def is_configured() -> bool:

@@ -26,7 +26,7 @@ function RuleForm({ initial, onSave, onCancel }) {
 
   const submit = async (e) => {
     e.preventDefault()
-    if (!f.name.trim() || !f.soql.trim()) { setErr('Name and SOQL are required'); return }
+    if (!f.name.trim() || !f.soql.trim()) { setErr('Name and SQL query are required'); return }
     setSaving(true); setErr('')
     try {
       await onSave({ ...f, threshold: Number(f.threshold) || 0 })
@@ -42,9 +42,9 @@ function RuleForm({ initial, onSave, onCancel }) {
       <label>Name
         <input value={f.name} onChange={e => update('name', e.target.value)} placeholder="Low inventory" />
       </label>
-      <label>SOQL
+      <label>SQL Query
         <textarea rows={3} value={f.soql} onChange={e => update('soql', e.target.value)}
-          placeholder="SELECT COUNT() FROM Student__c WHERE Student_Marketing_Status__c = 'In Market'" />
+          placeholder='SELECT COUNT(*) FROM "Student__c" WHERE "Student_Marketing_Status__c" = $$In Market$$' />
       </label>
       <div className="alert-form-row">
         <label>Condition
@@ -173,7 +173,7 @@ export default function AlertsPage() {
       <div className="alerts-header">
         <div>
           <h2 className="alerts-title">Alert Rules</h2>
-          <p className="alerts-subtitle">Watch SOQL queries and get notified when thresholds are crossed</p>
+          <p className="alerts-subtitle">Watch SQL queries and get notified when thresholds are crossed</p>
         </div>
         <div className="alerts-header-actions">
           <button className="btn-secondary" onClick={handleCheckAll} disabled={loading}>Check all</button>

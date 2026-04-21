@@ -12,6 +12,7 @@ function prepare(records) {
   const keys = Object.keys(records[0]).filter(k => k !== 'attributes')
   const valKey = keys.find(k => k.startsWith('expr') || /cnt|count|sum|avg/i.test(k))
   if (!valKey) return null
+  if (records.length === 1) return null
   const labelKey = keys.find(k => k !== valKey) || keys[0]
   const data = records
     .map(r => {

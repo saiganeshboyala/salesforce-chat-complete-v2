@@ -30,7 +30,7 @@ function stripHtml(text = '') {
 
 export default function EmailModal({ message, onClose }) {
   const defaultSubject = useMemo(() => {
-    const q = (message.question || 'Salesforce data answer').trim().replace(/\s+/g, ' ')
+    const q = (message.question || 'Data answer').trim().replace(/\s+/g, ' ')
     return q.length > 70 ? q.slice(0, 67) + '…' : q
   }, [message.question])
 
@@ -42,7 +42,7 @@ export default function EmailModal({ message, onClose }) {
       parts.push('\nData preview:')
       parts.push(formatRecordsAsText(message.data.records))
     }
-    if (message.soql) parts.push(`\nSOQL:\n${message.soql}`)
+    if (message.soql) parts.push(`\nSQL:\n${message.soql}`)
     let body = parts.join('\n')
     if (body.length > MAX_BODY_LEN) body = body.slice(0, MAX_BODY_LEN) + '\n…(truncated)'
     return body

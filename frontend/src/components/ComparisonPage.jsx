@@ -142,7 +142,7 @@ export default function ComparisonPage() {
           </div>
 
           <details className="compare-queries">
-            <summary>Generated SOQL</summary>
+            <summary>Generated SQL</summary>
             <div><b>{data.label1}:</b> <code>{data.query1}</code></div>
             <div><b>{data.label2}:</b> <code>{data.query2}</code></div>
           </details>

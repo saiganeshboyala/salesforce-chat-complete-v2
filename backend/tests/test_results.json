@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-04-21T04:41:46.761568",
+  "server": "http://localhost:8000",
+  "total": 1,
+  "passed": 1,
+  "failed": 0,
+  "self_corrected": 0,
+  "data_verified": 1,
+  "data_mismatches": 0,
+  "learned": 1,
+  "db_verification": true,
+  "pass_rate": "100.0%",
+  "level_breakdown": {
+    "1": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "category": "L1 Basic Counts",
+      "level": 1,
+      "question": "How many students do we have?",
+      "answer": "**7,790 students** are currently in market.",
+      "sql": "SELECT COUNT(*) AS cnt FROM \"Student__c\" LIMIT 2000",
+      "record_count": 1,
+      "status": "pass_verified",
+      "verified": true,
+      "verification_detail": "Verified: count=7790 matches",
+      "retries": 0,
+      "self_corrected": false
+    }
+  ],
+  "errors": []
+}

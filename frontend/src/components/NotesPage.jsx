@@ -136,7 +136,7 @@ export default function NotesPage() {
       <div className="notes-header">
         <div>
           <h2 className="notes-title">Data Annotations</h2>
-          <p className="notes-subtitle">Personal notes and tags attached to Salesforce records</p>
+          <p className="notes-subtitle">Personal notes and tags attached to records</p>
         </div>
       </div>
 

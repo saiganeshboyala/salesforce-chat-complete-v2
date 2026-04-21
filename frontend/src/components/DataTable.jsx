@@ -203,7 +203,7 @@ export default function DataTable({ records, totalSize }) {
           {sorted.length > PAGE_SIZE
             ? `${start}–${end} of ${sorted.length.toLocaleString()}`
             : `${sorted.length.toLocaleString()}`}
-          {totalSize && totalSize > sorted.length ? ` (${totalSize.toLocaleString()} total in Salesforce)` : ''}
+          {totalSize && totalSize > sorted.length ? ` (${totalSize.toLocaleString()} total)` : ''}
           {' '}records
         </span>
       </div>
