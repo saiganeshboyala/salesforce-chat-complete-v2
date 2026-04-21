@@ -1827,13 +1827,34 @@ def save_learning(question, sql, answer, status="good"):
         return False
 
 
+CHECKPOINT_FILE = os.path.join(os.path.dirname(__file__), "test_checkpoint.json")
+
+
+def _load_checkpoint():
+    """Load checkpoint from previous interrupted run."""
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def _save_checkpoint(data):
+    """Save checkpoint after each question for resume support."""
+    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
 def run_tests(questions=None, max_questions=None, category_filter=None,
-              level_filter=None, max_retries=2, delay=0.3, learn=True):
+              level_filter=None, max_retries=2, delay=0.3, learn=True, resume=True):
     """
     Run test questions with self-correcting retry logic.
     - Logs EVERY question with answer + SQL + verification status
     - Failed questions are retried with hints up to max_retries times
     - Successful corrections are fed back to the app's learning memory (self-learning)
+    - Resume support: if interrupted, restarts from where it left off
     """
     headers = {}
     if AUTH_TOKEN:
@@ -1851,6 +1872,35 @@ def run_tests(questions=None, max_questions=None, category_filter=None,
         test_set = test_set[:max_questions]
 
     total = len(test_set)
+
+    # Resume from checkpoint if available
+    start_from = 0
+    passed = 0
+    failed = 0
+    retried_pass = 0
+    errors = []
+    all_results = []
+    data_verified = 0
+    data_mismatches = 0
+    learned = 0
+
+    if resume:
+        checkpoint = _load_checkpoint()
+        if checkpoint and checkpoint.get("total") == total:
+            start_from = checkpoint.get("completed", 0)
+            passed = checkpoint.get("passed", 0)
+            failed = checkpoint.get("failed", 0)
+            retried_pass = checkpoint.get("retried_pass", 0)
+            errors = checkpoint.get("errors", [])
+            all_results = checkpoint.get("all_results", [])
+            data_verified = checkpoint.get("data_verified", 0)
+            data_mismatches = checkpoint.get("data_mismatches", 0)
+            learned = checkpoint.get("learned", 0)
+            if start_from > 0:
+                print(f"\n  >> RESUMING from question {start_from + 1}/{total} ({start_from} already done)")
+                print(f"     Previous: {passed} pass | {failed} fail | {learned} learned")
+                print()
+
     print(f"\n{'='*70}")
     print(f"  CHAT API TEST SUITE - {total} questions")
     print(f"  Server: {BASE_URL}")
@@ -1859,14 +1909,6 @@ def run_tests(questions=None, max_questions=None, category_filter=None,
     print(f"  Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*70}\n")
 
-    passed = 0
-    failed = 0
-    retried_pass = 0
-    errors = []
-    all_results = []  # Full log of every question
-    data_verified = 0
-    data_mismatches = 0
-    learned = 0
     session_id = str(uuid.uuid4())
 
     # Check if DB verification is available
@@ -1881,6 +1923,9 @@ def run_tests(questions=None, max_questions=None, category_filter=None,
     print()
 
     for i, (category, level, question) in enumerate(test_set):
+        if i < start_from:
+            continue
+
         print(f"  [{i+1}/{total}] L{level} | {question[:60]}...", end="", flush=True)
         result = send_question(client, question, session_id)
         is_valid, msg, severity = validate_response(result, question, level)
@@ -1996,6 +2041,20 @@ def run_tests(questions=None, max_questions=None, category_filter=None,
         # Print result for this question
         status_icon = "PASS" if "pass" in log_entry["status"] else "FAIL"
         print(f" -> {status_icon}", flush=True)
+
+        # Save checkpoint after every question (so we can resume)
+        _save_checkpoint({
+            "total": total,
+            "completed": i + 1,
+            "passed": passed,
+            "failed": failed,
+            "retried_pass": retried_pass,
+            "errors": errors,
+            "all_results": all_results,
+            "data_verified": data_verified,
+            "data_mismatches": data_mismatches,
+            "learned": learned,
+        })
 
         # Progress summary every 50
         if (i + 1) % 50 == 0:
@@ -2116,6 +2175,11 @@ def run_tests(questions=None, max_questions=None, category_filter=None,
     print(f"\n  Full report saved to: {results_file}")
     print(f"  (Contains every question with answer, SQL, and verification status)")
 
+    # Clean up checkpoint since we finished
+    if os.path.exists(CHECKPOINT_FILE):
+        os.remove(CHECKPOINT_FILE)
+        print(f"  Checkpoint cleared (run complete)")
+
     client.close()
     return passed, failed, errors
 
@@ -2134,6 +2198,7 @@ if __name__ == "__main__":
     parser.add_argument("--url", type=str, help="API base URL")
     parser.add_argument("--delay", type=float, default=0.3, help="Delay between requests in seconds")
     parser.add_argument("--no-learn", action="store_true", help="Disable self-learning (don't save to app memory)")
+    parser.add_argument("--fresh", action="store_true", help="Ignore checkpoint and start from scratch")
     args = parser.parse_args()
 
     if args.url:
@@ -2159,6 +2224,10 @@ if __name__ == "__main__":
     for cat, lvl, qs in ALL_CATEGORIES:
         print(f"    L{lvl} {cat:25s}: {len(qs)}")
 
+    if args.fresh and os.path.exists(CHECKPOINT_FILE):
+        os.remove(CHECKPOINT_FILE)
+        print("\n  >> Fresh start (checkpoint cleared)")
+
     # Run tests
     passed, failed, errors = run_tests(
         max_questions=args.max,
@@ -2167,6 +2236,7 @@ if __name__ == "__main__":
         max_retries=args.retries,
         delay=args.delay,
         learn=not args.no_learn,
+        resume=not args.fresh,
     )
 
     sys.exit(0 if failed == 0 else 1)
