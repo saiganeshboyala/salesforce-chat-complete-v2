@@ -59,8 +59,9 @@ function BarCard({ data, onDrill }) {
   const handleClick = (entry) => {
     if (entry?.drilldown) onDrill(entry.drilldown)
   }
+  const height = Math.min(Math.max(220, data.length * 32), 500)
   return (
-    <ResponsiveContainer width="100%" height={Math.max(220, data.length * 36)}>
+    <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}
         onClick={(e) => e?.activePayload?.[0]?.payload && handleClick(e.activePayload[0].payload)}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />

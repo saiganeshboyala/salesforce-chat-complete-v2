@@ -14,6 +14,64 @@ from app.chat.memory import save_interaction, get_learning_examples_prompt
 
 logger = logging.getLogger(__name__)
 
+# ── Dynamic Picklist Values (loaded from DB on first use) ─────────
+_picklist_cache = None
+
+async def _load_picklist_values():
+    """Load actual picklist values from PostgreSQL for accurate SQL generation."""
+    global _picklist_cache
+    if _picklist_cache is not None:
+        return _picklist_cache
+
+    queries = {
+        "Student_Marketing_Status__c": 'SELECT DISTINCT "Student_Marketing_Status__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" IS NOT NULL ORDER BY 1',
+        "Marketing_Visa_Status__c": 'SELECT DISTINCT "Marketing_Visa_Status__c" FROM "Student__c" WHERE "Marketing_Visa_Status__c" IS NOT NULL ORDER BY 1',
+        "Technology__c": 'SELECT DISTINCT "Technology__c" FROM "Student__c" WHERE "Technology__c" IS NOT NULL ORDER BY 1',
+        "Submission_Status__c": 'SELECT DISTINCT "Submission_Status__c" FROM "Submissions__c" WHERE "Submission_Status__c" IS NOT NULL ORDER BY 1',
+        "Interview_Type__c": 'SELECT DISTINCT "Type__c" FROM "Interviews__c" WHERE "Type__c" IS NOT NULL ORDER BY 1',
+        "Interview_Final_Status__c": 'SELECT DISTINCT "Final_Status__c" FROM "Interviews__c" WHERE "Final_Status__c" IS NOT NULL ORDER BY 1',
+        "Job_Project_Type__c": 'SELECT DISTINCT "Project_Type__c" FROM "Job__c" WHERE "Project_Type__c" IS NOT NULL ORDER BY 1',
+        "Employee_Deptment__c": 'SELECT DISTINCT "Deptment__c" FROM "Employee__c" WHERE "Deptment__c" IS NOT NULL ORDER BY 1',
+        "BU_Names": 'SELECT DISTINCT "BU_Name__c" FROM "Submissions__c" WHERE "BU_Name__c" IS NOT NULL ORDER BY 1',
+    }
+    result = {}
+    for key, sql in queries.items():
+        try:
+            r = await execute_query(sql)
+            if "error" not in r and r.get("records"):
+                col = list(r["records"][0].keys())[0]
+                result[key] = [rec[col] for rec in r["records"] if rec.get(col)]
+        except Exception:
+            pass
+    _picklist_cache = result
+    logger.info(f"Loaded picklist values: {', '.join(f'{k}({len(v)})' for k, v in result.items())}")
+    return result
+
+
+def _build_picklist_prompt(picklists):
+    """Build the picklist section for the SQL prompt using live DB values."""
+    if not picklists:
+        return ""
+    lines = ["\nACTUAL PICKLIST VALUES FROM DATABASE (use EXACT spelling):"]
+    mapping = {
+        "Student_Marketing_Status__c": "Student__c.Student_Marketing_Status__c",
+        "Marketing_Visa_Status__c": "Student__c.Marketing_Visa_Status__c",
+        "Technology__c": "Student__c.Technology__c",
+        "Submission_Status__c": "Submissions__c.Submission_Status__c",
+        "Interview_Type__c": "Interviews__c.Type__c",
+        "Interview_Final_Status__c": "Interviews__c.Final_Status__c",
+        "Job_Project_Type__c": "Job__c.Project_Type__c",
+        "Employee_Deptment__c": "Employee__c.Deptment__c",
+    }
+    for key, label in mapping.items():
+        vals = picklists.get(key, [])
+        if vals:
+            lines.append(f"  {label}: {', '.join(repr(v) for v in vals)}")
+    bu_names = picklists.get("BU_Names", [])
+    if bu_names:
+        lines.append(f"  BU Manager Names ({len(bu_names)} total): {', '.join(repr(n) for n in bu_names[:30])}{'...' if len(bu_names) > 30 else ''}")
+    return "\n".join(lines)
+
 # ── Query Result Cache (avoid re-querying for same question within 5 min)
 _soql_cache = {}
 _CACHE_TTL = 300  # 5 minutes
@@ -50,7 +108,7 @@ REPORT_PATTERNS = [
         "default_time": "THIS_MONTH",
         "queries": [
             """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "BU_Name__c" LIMIT 2000""",
-            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
             """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Verbal_Confirmation_Date__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
         ],
         "labels": ["Monthly Submissions", "Monthly Interviews", "Monthly Confirmations"],
@@ -61,12 +119,12 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "BU_Name__c" LIMIT 2000""",
-            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Final_Status__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000""",
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "BU_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", i."Type__c", i."Final_Status__c", i."Interview_Date1__c", i."Amount__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
         ],
         "queries_lead": [
-            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c" LIMIT 2000""",
-            """SELECT s."Name" AS "Student_Name", i."Offshore_Manager__c", i."Type__c", i."Final_Status__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Offshore_Manager__c" LIMIT 2000""",
+            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "Offshore_Manager_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", s."Offshore_Manager_Name__c", m."Name" AS "BU_Name", i."Type__c", i."Final_Status__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY s."Offshore_Manager_Name__c" LIMIT 2000""",
         ],
         "labels": ["Last Week Submissions", "Last Week Interviews"],
     },
@@ -119,7 +177,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last week": "LAST_WEEK", "this week": "THIS_WEEK", "this month": "THIS_MONTH"},
         "default_time": "THIS_WEEK",
         "queries": [
-            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Interview_Date__c", i."Amount__c", i."Bill_Rate__c", i."Final_Status__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE (i."Amount__c" IS NULL OR i."Bill_Rate__c" IS NULL OR i."Final_Status__c" IS NULL) AND i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000"""
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", i."Type__c", i."Interview_Date1__c", i."Amount__c", i."Bill_Rate__c", i."Final_Status__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE (i."Amount__c" IS NULL OR i."Bill_Rate__c" IS NULL OR i."Final_Status__c" IS NULL) AND i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY m."Name" LIMIT 2000"""
         ],
         "labels": ["Interviews with Missing Fields"],
     },
@@ -129,10 +187,10 @@ REPORT_PATTERNS = [
         "default_time": None,
         "by_lead": True,
         "queries_bu": [
-            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "CreatedDate" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY m."Name" LIMIT 2000"""
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY m."Name" LIMIT 2000"""
         ],
         "queries_lead": [
-            """SELECT s."Name", m."Name" AS "BU_Name", s."Offshore_Manager_Name__c", s."Technology__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "CreatedDate" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY s."Offshore_Manager_Name__c" LIMIT 2000"""
+            """SELECT s."Name", m."Name" AS "BU_Name", s."Offshore_Manager_Name__c", s."Technology__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY s."Offshore_Manager_Name__c" LIMIT 2000"""
         ],
         "labels": ["In-Market Students with No Interviews (14 days)"],
     },
@@ -160,7 +218,7 @@ REPORT_PATTERNS = [
         "time_keywords": {"last month": "LAST_MONTH", "this month": "THIS_MONTH", "last week": "LAST_WEEK", "this week": "THIS_WEEK"},
         "default_time": "THIS_MONTH",
         "queries": [
-            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Amount__c", i."Amount_INR__c", i."Bill_Rate__c", i."Final_Status__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Onsite_Manager__c" LIMIT 2000"""
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", i."Type__c", i."Amount__c", i."Amount_INR__c", i."Bill_Rate__c", i."Final_Status__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY m."Name" LIMIT 2000"""
         ],
         "labels": ["Interviews with Amounts"],
     },
@@ -171,8 +229,8 @@ REPORT_PATTERNS = [
         "name_filter": True,
         "whatsapp_format": True,
         "queries": [
-            """SELECT "Student_Name__c", "BU_Name__c", "Offshore_Manager_Name__c", "Recruiter_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%{name}%' AND "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Student_Name__c" LIMIT 2000""",
-            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Offshore_Manager__c", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."Onsite_Manager__c" ILIKE '%{name}%' AND i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Offshore_Manager__c" LIMIT 2000""",
+            """SELECT "Student_Name__c", "BU_Name__c", "Offshore_Manager_Name__c", "Recruiter_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%{name}%' AND "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Student_Name__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE m."Name" ILIKE '%{name}%' AND i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
             """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Verbal_Confirmation_Date__c", s."Marketing_Visa_Status__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND m."Name" ILIKE '%{name}%' AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} ORDER BY m."Name" LIMIT 2000""",
             """SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c", s."Last_Submission_Date__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND m."Name" ILIKE '%{name}%' AND (s."Last_Submission_Date__c" < CURRENT_DATE - INTERVAL '3 days' OR s."Last_Submission_Date__c" IS NULL) ORDER BY m."Name" LIMIT 2000""",
         ],
@@ -184,8 +242,8 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "name_filter": True,
         "queries": [
-            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%{name}%' AND "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Submission_Date__c" LIMIT 2000""",
-            """SELECT s."Name" AS "Student_Name", i."Onsite_Manager__c", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."Onsite_Manager__c" ILIKE '%{name}%' AND i."CreatedDate" >= {time_start} AND i."CreatedDate" < {time_end} ORDER BY i."Interview_Date__c" LIMIT 2000""",
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "BU_Name__c" ILIKE '%{name}%' AND "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "Submission_Date__c" LIMIT 2000""",
+            """SELECT s."Name" AS "Student_Name", m."Name" AS "BU_Name", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE m."Name" ILIKE '%{name}%' AND i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} ORDER BY i."Interview_Date1__c" LIMIT 2000""",
         ],
         "labels": ["Submissions", "Interviews"],
     },
@@ -195,10 +253,10 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "BU_Name__c", "Student_Name__c" LIMIT 2000"""
+            """SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "BU_Name__c", "Student_Name__c" LIMIT 2000"""
         ],
         "queries_lead": [
-            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Student_Name__c" LIMIT 2000"""
+            """SELECT "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Student_Name__c" LIMIT 2000"""
         ],
         "labels": ["Student Performance (Submissions)"],
     },
@@ -208,10 +266,10 @@ REPORT_PATTERNS = [
         "default_time": "LAST_WEEK",
         "by_lead": True,
         "queries_bu": [
-            """SELECT "Recruiter_Name__c", "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "BU_Name__c", "Recruiter_Name__c" LIMIT 2000"""
+            """SELECT "Recruiter_Name__c", "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "BU_Name__c", "Recruiter_Name__c" LIMIT 2000"""
         ],
         "queries_lead": [
-            """SELECT "Recruiter_Name__c", "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "CreatedDate" >= {time_start} AND "CreatedDate" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Recruiter_Name__c" LIMIT 2000"""
+            """SELECT "Recruiter_Name__c", "Student_Name__c", "Offshore_Manager_Name__c", "BU_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} ORDER BY "Offshore_Manager_Name__c", "Recruiter_Name__c" LIMIT 2000"""
         ],
         "labels": ["Recruiter Performance (Submissions)"],
     },
@@ -298,6 +356,7 @@ OBJECT RELATIONSHIPS (all interconnected):
   Student__c.Manager__c -> Manager__c (BU). Use Manager__r.Name for BU name.
   Submissions__c.Student__c -> Student__c. Has BU_Name__c text field.
   Interviews__c.Student__c -> Student__c. Interviews__c.Submissions__c -> Submissions__c.
+  IMPORTANT: Interviews__c has NO BU_Name__c. For BU-wise interview data, must JOIN: Interviews__c -> Student__c -> Manager__c.
   Job__c.Student__c -> Student__c. Job__c.Share_With__c -> Manager__c (BU).
   Employee__c.Onshore_Manager__c -> Manager__c (BU). Employee__c.Cluster__c -> Cluster__c.
   BU_Performance__c.BU__c -> Manager__c (monthly BU metrics).
@@ -308,7 +367,7 @@ KEY RULES:
 - "students under BU X" -> Student__c (use Manager__r.Name LIKE '%X%' for cross-object lookup)
 - "student status" / "in market" / "exit" -> Student__c
 - "submissions for BU X" -> Submissions__c (has BU_Name__c text field)
-- "interviews" / "interview count" -> Interviews__c
+- "interviews" / "interview count" -> Interviews__c (add Student__c + Manager__c if BU-wise needed)
 - "employees" / "employee" -> Employee__c
 - "jobs" / "placements" / "W2" -> Job__c
 - "BU performance" / "metrics" (aggregate counts only) -> BU_Performance__c
@@ -331,12 +390,33 @@ Return ONLY the SQL query. No explanation, no markdown, no backticks.
 CRITICAL: All table and column names MUST be double-quoted (case-sensitive PostgreSQL).
 Example: SELECT "Name", "Technology__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market'
 
+ACTUAL PICKLIST VALUES (use EXACT spelling — never guess):
+  Student_Marketing_Status__c: 'Exit', 'In Market', 'Payroll Purpose', 'Pre Marketing', 'Project Completed', 'Project Completed-In Market', 'Project Started', 'Verbal Confirmation'
+  Marketing_Visa_Status__c: 'CPT', 'GC', 'H1', 'H4 EAD', 'L2', 'OPT', 'STEM', 'USC'
+  Technology__c: 'AEM', 'AIGEE', 'Business Analyst', 'CS', 'DE', 'DevOps', 'DS/AI', 'JAVA', '.NET', 'Network Engineer', 'Oracle CPQ', 'Oracle EBS Developer', 'Oracle WebCenter Content Developer', 'PowerBI', 'RPA', 'SAP BTP', 'Service Now', 'SFDC', 'SQL Developer'
+  Submission_Status__c: 'Interview Scheduled', 'Submitted'
+  Interviews__c.Type__c: 'Assessment', 'Client', 'Final Round', 'First Round', 'Fourth Round', 'HR', 'Implementation', 'NA', 'Second Round', 'Third Round', 'Vendor'
+  Interviews__c.Final_Status__c: 'Average', 'Cancelled', 'Confirmation', 'Expecting Confirmation', 'Good', 'Re-Scheduled', 'Very Bad', 'Very Good'
+  Job__c.Project_Type__c: 'C2C', 'PD', 'W2', 'W2-2'
+  Job__c.Visa_Status__c: 'CPT', 'H1', 'H1B-Selected', 'H4 EAD', 'L2', 'OPT', 'STEM', 'STEM-P', 'Stem-Progress', 'USC'
+  Manager__c.Type__c: 'Lead', 'Manager'
+  Employee__c.Deptment__c: 'Accounts', 'BDM', 'Central Office', 'Graphic Designers', 'HR', 'INDIA HR', 'Networking', 'Offshore Floor Manager', 'Offshore Manger', 'OPT Recruiter', 'Otter', 'Proxy Allocation', 'Proxy Coordination', 'Recruiter', 'Resume Writer', 'Supervisors'
+
+USER TERM → CORRECT STATUS MAPPING:
+  "bench" / "on bench" / "in market" → 'In Market'
+  "exit" / "left" / "exited" → 'Exit'
+  "confirmed" / "confirmation" / "verbal" → 'Verbal Confirmation'
+  "project started" / "placed" / "started" → 'Project Started'
+  "project completed" → 'Project Completed' or 'Project Completed-In Market'
+  "pre marketing" / "premarketing" / "training" → 'Pre Marketing'
+  "active" (for jobs) → WHERE "Active__c" = true
+  "active" (for students) → 'In Market' (students in market are active)
+
 RULES:
 - ALWAYS double-quote table names: "Student__c", "Submissions__c", "Interviews__c", "Job__c", "Employee__c"
 - ALWAYS double-quote column names: "Name", "BU_Name__c", "Technology__c", etc.
 - Use EXACT field names from the schema. NEVER guess or invent field names.
-- Check BUSINESS REPORT PATTERNS in the schema for pre-built queries.
-- Check ACTUAL PICKLIST VALUES for correct spelling in WHERE clauses.
+- Use EXACT picklist values from the list above. NEVER guess or abbreviate.
 - For person names, use ILIKE '%LastName%' (case-insensitive search by LAST NAME).
   Example: "Sai Ganesh Chinnamsetty" -> WHERE "Name" ILIKE '%Chinnamsetty%'
   If full name doesn't match, try last name only. Never use exact match (=) for names.
@@ -345,6 +425,15 @@ RULES:
 - For follow-ups like "by lead" or "this month": look at PREVIOUS SQL and modify.
 - Max LIMIT 2000. Only SELECT. If impossible, return: NO_SQL
 - Use PostgreSQL date functions (see below). NEVER use SOQL date literals like TODAY, THIS_MONTH, LAST_N_DAYS.
+
+CORRECT DATE FIELDS PER TABLE (use these, NOT CreatedDate):
+- Submissions__c: use "Submission_Date__c" (Date) for time filtering
+- Interviews__c: use "Interview_Date1__c" (Date) for time filtering. NOT "Interview_Date__c" (DateTime) or "CreatedDate"
+- Student__c confirmations: use "Verbal_Confirmation_Date__c" (Date)
+- Student__c project start: use "Job_Start_Date__c" (Date) or "Paid_Offer_Start_Date__c" (Date)
+- Job__c: use "Project_Start_Date__c" / "Project_End_Date__c" (Date)
+- BU_Performance__c: use "Date__c" (Date)
+- Only use "CreatedDate" when no business date field exists or when checking record creation
 
 DATE FUNCTIONS (PostgreSQL - ALWAYS use these):
 - Today: CURRENT_DATE
@@ -361,7 +450,11 @@ CROSS-OBJECT QUERIES (use LEFT JOIN):
 - Student -> BU Manager: LEFT JOIN "Manager__c" ON "Student__c"."Manager__c" = "Manager__c"."Id"
 - Submission -> Student: LEFT JOIN "Student__c" ON "Submissions__c"."Student__c" = "Student__c"."Id"
 - Interview -> Student: LEFT JOIN "Student__c" ON "Interviews__c"."Student__c" = "Student__c"."Id"
-- For BU queries on Submissions/Interviews: just use "BU_Name__c" or "Onsite_Manager__c" directly (no JOIN needed)
+- For BU queries on Submissions: use "BU_Name__c" directly (no JOIN needed)
+- IMPORTANT: For BU queries on Interviews: "Interviews__c" does NOT have "BU_Name__c". You MUST JOIN through Student to Manager:
+  LEFT JOIN "Student__c" s ON "Interviews__c"."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
+  Then GROUP BY m."Name" to get BU-wise breakdown. Do NOT use "Onsite_Manager__c" as BU name — it is a different role.
+- "Onsite_Manager__c" in Interviews__c = the onsite manager (NOT the BU manager). Never confuse them.
 - Subqueries: WHERE "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE ...)
 
 WHEN USER ASKS "how many" or "count" (simple count question):
@@ -386,22 +479,43 @@ Q: "how many students in market under Divya?"
 A: SELECT s."Name", m."Name" AS "BU_Manager", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND m."Name" ILIKE '%Divya%' ORDER BY s."Days_in_Market_Business__c" DESC LIMIT 2000
 
 Q: "last week submissions by BU"
-A: SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c", "Offshore_Manager_Name__c" FROM "Submissions__c" WHERE "CreatedDate" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND "CreatedDate" < DATE_TRUNC('week', CURRENT_DATE) ORDER BY "BU_Name__c" LIMIT 2000
+A: SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c", "Offshore_Manager_Name__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND "Submission_Date__c" < DATE_TRUNC('week', CURRENT_DATE) ORDER BY "BU_Name__c" LIMIT 2000
 
 Q: "this month submissions BU wise"
 A: SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' ORDER BY "BU_Name__c" LIMIT 2000
 
 Q: "today interviews"
-A: SELECT "Name", "Type__c", "Final_Status__c", "Interview_Date__c", "Onsite_Manager__c" FROM "Interviews__c" WHERE "Interview_Date__c" = CURRENT_DATE LIMIT 2000
+A: SELECT i."Name", s."Name" AS "Student_Name", i."Type__c", i."Final_Status__c", i."Interview_Date1__c", i."Amount__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" WHERE i."Interview_Date1__c" = CURRENT_DATE LIMIT 2000
 
 Q: "top BUs by submission count this month"
 A: SELECT "BU_Name__c", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY "BU_Name__c" ORDER BY cnt DESC LIMIT 30
 
+Q: "monthly interviews BU wise"
+A: SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt, SUM(i."Amount__c") AS total_amount FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= DATE_TRUNC('month', CURRENT_DATE) AND i."Interview_Date1__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY m."Name" ORDER BY cnt DESC LIMIT 2000
+
+Q: "monthly confirmations BU wise"
+A: SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY m."Name" ORDER BY cnt DESC LIMIT 2000
+
 Q: "students with no interviews in 2 weeks"
-A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "CreatedDate" >= CURRENT_DATE - INTERVAL '14 days') LIMIT 2000
+A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') LIMIT 2000
 
 Q: "details of Sai Ganesh Chinnamsetty"
-A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c", "Phone__c", "Email__c", "Marketing_Visa_Status__c", "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c", "Project_Start_Date__c" FROM "Student__c" WHERE "Name" ILIKE '%Chinnamsetty%' LIMIT 2000"""
+A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c", "Phone__c", "Marketing_Email__c", "Personal_Email__c", "Marketing_Visa_Status__c", "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c", "Project_Start_Date__c" FROM "Student__c" WHERE "Name" ILIKE '%Chinnamsetty%' LIMIT 2000
+
+Q: "last week interviews by BU"
+A: SELECT m."Name" AS "BU_Name", s."Name" AS "Student_Name", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND i."Interview_Date1__c" < DATE_TRUNC('week', CURRENT_DATE) ORDER BY m."Name" LIMIT 2000
+
+Q: "monthly submissions interviews confirmations BU wise"
+A: SELECT "BU_Name__c", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY "BU_Name__c" ORDER BY cnt DESC LIMIT 2000
+
+FIELD NAME WARNINGS (common mistakes to avoid):
+- Student__c does NOT have "Email__c" — use "Marketing_Email__c" or "Personal_Email__c"
+- Interviews__c does NOT have "BU_Name__c" — JOIN through Student__c -> Manager__c
+- Interviews__c."Onsite_Manager__c" is NOT the BU manager — it is a different role
+- Use "Interview_Date1__c" (Date type) for date comparisons, NOT "Interview_Date__c" (DateTime)
+- Student__c."Offshore_Manager_Name__c" = offshore manager name (text field, no JOIN needed)
+- Submissions__c."BU_Name__c" = BU manager name (text field, no JOIN needed)
+- Submissions__c."Offshore_Manager_Name__c" = offshore manager name (text field, no JOIN needed)"""
 
 ANSWER_PROMPT = """You are a data analyst for a staffing/consulting company. Give PRECISE, CONCISE answers.
 
@@ -868,17 +982,22 @@ def _get_focused_schema(obj_names):
 
 
 def _extract_object_fields_hint(soql, _schema_text=None):
-    """Extract the object name from a SQL query and list its exact fields."""
-    m = re.search(r'FROM\s+(\w+)', soql, re.IGNORECASE)
-    if not m:
+    """Extract object names from a SQL query (including JOINs) and list their exact fields."""
+    all_tables = re.findall(r'(?:FROM|JOIN)\s+"?(\w+)"?', soql, re.IGNORECASE)
+    if not all_tables:
         return ""
-    obj_name = m.group(1)
     schema = get_schema()
-    if obj_name not in schema:
-        return ""
-    fields = schema[obj_name].get("fields", [])
-    field_names = [f"{f['name']} ({f['label']}, {f['type']})" for f in fields[:80]]
-    return f"\nAVAILABLE FIELDS on {obj_name}:\n" + "\n".join(field_names)
+    lines = []
+    seen = set()
+    for obj_name in all_tables:
+        if obj_name in seen or obj_name not in schema:
+            continue
+        seen.add(obj_name)
+        fields = schema[obj_name].get("fields", [])
+        field_names = [f"{f['name']} ({f['label']}, {f['type']})" for f in fields[:80]]
+        lines.append(f"\nAVAILABLE FIELDS on {obj_name}:")
+        lines.extend(field_names)
+    return "\n".join(lines) if lines else ""
 
 
 def _validate_soql_fields(soql):
@@ -887,15 +1006,19 @@ def _validate_soql_fields(soql):
     if not schema:
         return None
 
-    m = re.search(r'FROM\s+(\w+)', soql, re.IGNORECASE)
-    if not m:
+    # For JOINed queries, collect valid fields from ALL tables in the query
+    all_tables = re.findall(r'(?:FROM|JOIN)\s+"?(\w+)"?', soql, re.IGNORECASE)
+    if not all_tables:
         return None
-    obj_name = m.group(1)
+
+    obj_name = all_tables[0]
     if obj_name not in schema:
         return f"Object '{obj_name}' not found. Available: {', '.join(sorted(schema.keys())[:20])}"
 
-    valid_fields = {f['name'].lower() for f in schema[obj_name].get('fields', [])}
-    valid_fields.update({'count', 'id'})
+    valid_fields = {'count', 'id', 'cnt', 'total', 'total_amount'}
+    for tbl in all_tables:
+        if tbl in schema:
+            valid_fields.update(f['name'].lower() for f in schema[tbl].get('fields', []))
 
     bad_fields = []
 
@@ -906,10 +1029,14 @@ def _validate_soql_fields(soql):
             part = part.strip()
             if not part or '(' in part:
                 continue
-            # Skip __r relationship traversals (e.g. Manager__r.Name, Student__r.Name)
+            # Skip aliases (AS ...), relationship traversals, and table-prefixed fields
+            if ' AS ' in part.upper():
+                part = part[:part.upper().index(' AS ')].strip()
             if '__r.' in part or '.' in part:
                 continue
-            field = part.strip()
+            if '*' in part:
+                continue
+            field = part.strip().strip('"')
             if field.lower() not in valid_fields:
                 bad_fields.append(field)
 
@@ -917,25 +1044,26 @@ def _validate_soql_fields(soql):
     where_m = re.search(r'WHERE\s+(.+?)(?:\s+ORDER|\s+GROUP|\s+LIMIT|\s*$)', soql, re.IGNORECASE | re.DOTALL)
     if where_m:
         where_clause = where_m.group(1)
-        for field_m in re.finditer(r'([\w.]+)\s*(?:=|!=|<|>|LIKE|IN\s*\()', where_clause, re.IGNORECASE):
+        for field_m in re.finditer(r'"?([\w.]+)"?\s*(?:=|!=|<|>|LIKE|ILIKE|IN\s*\(|IS\s)', where_clause, re.IGNORECASE):
             field = field_m.group(1).strip()
             if field.upper() in ('AND', 'OR', 'NOT', 'NULL', 'TRUE', 'FALSE', 'TODAY',
                                   'YESTERDAY', 'THIS_MONTH', 'LAST_MONTH', 'THIS_YEAR',
-                                  'LAST_N_DAYS', 'NEXT_N_DAYS'):
+                                  'LAST_N_DAYS', 'NEXT_N_DAYS', 'CURRENT_DATE', 'DATE_TRUNC',
+                                  'INTERVAL'):
                 continue
-            # Skip __r relationship traversals
             if '__r.' in field:
                 continue
-            if field.split('.')[-1].lower() not in valid_fields:
-                bad_fields.append(field)
+            field_name = field.split('.')[-1].strip('"')
+            if field_name.lower() not in valid_fields:
+                bad_fields.append(field_name)
 
     # Check GROUP BY / ORDER BY
     for clause in ('GROUP BY', 'ORDER BY'):
-        clause_m = re.search(rf'{clause}\s+(.+?)(?:\s+(?:ORDER|LIMIT|HAVING|ASC|DESC)|\s*$)', soql, re.IGNORECASE)
+        clause_m = re.search(rf'{clause}\s+(.+?)(?:\s+(?:ORDER|LIMIT|HAVING)|\s*$)', soql, re.IGNORECASE)
         if clause_m:
             for part in clause_m.group(1).split(','):
-                field = part.strip().split('.')[-1].strip()
-                if field and field.upper() not in ('ASC', 'DESC', 'NULLS', 'FIRST', 'LAST'):
+                field = part.strip().split('.')[-1].strip().strip('"')
+                if field and field.upper() not in ('ASC', 'DESC', 'NULLS', 'FIRST', 'LAST', 'CNT', 'TOTAL', 'TOTAL_AMOUNT'):
                     if field.lower() not in valid_fields:
                         bad_fields.append(field)
 
@@ -1039,15 +1167,19 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
 
     learning = await get_learning_examples_prompt(question)
 
+    # Load live picklist values from DB
+    picklists = await _load_picklist_values()
+    picklist_prompt = _build_picklist_prompt(picklists)
+
     # Step 1: Pick the right object(s)
     picked_objects = await _pick_objects(question, schema_text)
 
     # Step 2: Build focused schema for picked objects
     if picked_objects:
         focused = _get_focused_schema(picked_objects)
-        prompt = f"TARGET OBJECTS (query these):\n{focused}\n\nFULL SCHEMA CONTEXT:\n{schema_text}\n{learning}\nQuestion: {question}"
+        prompt = f"TARGET OBJECTS (query these):\n{focused}\n\nFULL SCHEMA CONTEXT:\n{schema_text}\n{picklist_prompt}\n{learning}\nQuestion: {question}"
     else:
-        prompt = f"Schema:\n{schema_text}\n{learning}\nQuestion: {question}"
+        prompt = f"Schema:\n{schema_text}\n{picklist_prompt}\n{learning}\nQuestion: {question}"
 
     if history:
         ctx = "\n".join(f"{m['role']}: {m['content'][:200]}" for m in history[-4:])
@@ -1174,6 +1306,48 @@ async def _route(question):
     return "SQL"
 
 
+def _verify_answer_counts(answer, soql_result, soql_recs, question):
+    """Post-verify: if AI answer has a count number, check it matches actual DB result."""
+    if not answer or not soql_recs:
+        return answer
+    try:
+        total = soql_result.get("totalSize", len(soql_recs))
+
+        # For count queries (single row, single numeric column)
+        if len(soql_recs) == 1 and len(soql_recs[0]) <= 2:
+            first_val = None
+            for k, v in soql_recs[0].items():
+                if k == "attributes":
+                    continue
+                if isinstance(v, (int, float)) and v is not None:
+                    first_val = int(v)
+                    break
+            if first_val is not None:
+                # Check if answer has a different number
+                nums_in_answer = re.findall(r'[\d,]+', answer)
+                nums_in_answer = [int(n.replace(",", "")) for n in nums_in_answer if n.replace(",", "").isdigit() and int(n.replace(",", "")) > 0]
+                if nums_in_answer and nums_in_answer[0] != first_val:
+                    wrong_num = nums_in_answer[0]
+                    correct = f"{first_val:,}"
+                    answer = answer.replace(str(wrong_num), correct, 1)
+                    answer = answer.replace(f"{wrong_num:,}", correct, 1)
+                    logger.info(f"Answer count corrected: {wrong_num} -> {first_val}")
+
+        # For list queries where LIMIT was hit, ensure answer uses true total
+        if soql_result.get("_limited") and total > len(soql_recs):
+            shown = len(soql_recs)
+            # If answer says the shown count instead of true total
+            shown_str = f"{shown:,}"
+            total_str = f"{total:,}"
+            if f"**{shown_str}" in answer and shown_str != total_str:
+                answer = answer.replace(f"**{shown_str}", f"**{total_str}", 1)
+                logger.info(f"Answer total corrected: {shown} -> {total}")
+
+    except Exception as e:
+        logger.warning(f"Answer verification failed: {e}")
+    return answer
+
+
 def _is_whatsapp_report(question):
     """Detect if the user wants a WhatsApp-style formatted report."""
     q = question.lower()
@@ -1205,7 +1379,7 @@ async def answer_question(question, conversation_history=None, username=None, la
             name_words = [w for w in question.split() if len(w) > 2 and w[0].isupper()]
             if len(name_words) >= 2:
                 last_word = name_words[-1]
-                fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
+                fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Marketing_Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
                 try:
                     fb_result = await execute_query(fallback_q)
                     if "error" not in fb_result and fb_result.get("records"):
@@ -1253,11 +1427,51 @@ async def answer_question(question, conversation_history=None, username=None, la
         labels = set(r.get("_query_label") for r in soql_recs if "_query_label" in r)
         if labels:
             parts.append(f"COMBINED QUERY RESULTS ({total} total records from {len(labels)} queries):\nSQL used:\n{soql_query}")
+
+            # Pre-compute BU-wise summary for the AI
+            bu_summary = {}
             for label in sorted(labels):
                 group = [r for r in soql_recs if r.get("_query_label") == label]
                 clean = [{k: v for k, v in r.items() if k != "_query_label"} for r in group]
+
+                # Count by BU for this query type
+                bu_field = None
+                for f in ["BU_Name__c", "BU_Name", "BU_Manager"]:
+                    if clean and f in clean[0]:
+                        bu_field = f
+                        break
+                if bu_field:
+                    for rec in clean:
+                        bu = rec.get(bu_field, "Unknown")
+                        if bu not in bu_summary:
+                            bu_summary[bu] = {}
+                        bu_summary[bu][label] = bu_summary[bu].get(label, 0) + 1
+                        # Sum amounts if present
+                        for amt_field in ["Amount__c", "total_amount"]:
+                            if amt_field in rec and rec[amt_field]:
+                                amt_key = f"{label}_amount"
+                                bu_summary[bu][amt_key] = bu_summary[bu].get(amt_key, 0) + float(rec[amt_field] or 0)
+
                 parts.append(f"\n--- {label} ({len(group)} records) ---")
                 parts.append(json.dumps(clean[:100], indent=2, default=str)[:20000])
+
+            # Add pre-computed summary table
+            if bu_summary:
+                parts.append("\n\nPRE-COMPUTED BU SUMMARY (use these EXACT numbers in your answer):")
+                parts.append("| BU Name | " + " | ".join(sorted(labels)) + " |")
+                parts.append("|---|" + "|".join(["---"] * len(labels)) + "|")
+                totals = {l: 0 for l in labels}
+                for bu in sorted(bu_summary.keys()):
+                    row = f"| {bu}"
+                    for l in sorted(labels):
+                        cnt = bu_summary[bu].get(l, 0)
+                        totals[l] += cnt
+                        row += f" | {cnt}"
+                    parts.append(row + " |")
+                total_row = "| **Total**"
+                for l in sorted(labels):
+                    total_row += f" | **{totals[l]}**"
+                parts.append(total_row + " |")
         else:
             if is_limited:
                 parts.append(f"QUERY RESULTS: **{total} TOTAL records** in database (showing {shown} below, but the TRUE TOTAL is {total}).\nIMPORTANT: Use {total} as the total count, NOT {shown}.\nSQL used: {soql_query}")
@@ -1309,6 +1523,10 @@ async def answer_question(question, conversation_history=None, username=None, la
         prompt = f"Conversation:\n{ctx}\n\n{prompt}"
 
     answer = await _call_ai(system, prompt, max_tokens=6000)
+
+    # Post-verify: check if count in answer matches actual DB data
+    if answer and soql_recs is not None:
+        answer = _verify_answer_counts(answer, soql_result, soql_recs, question)
 
     await save_interaction(question, soql_query, answer or "", route, username=username)
     suggestions = await _generate_suggestions(question, answer or "")
@@ -1381,7 +1599,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
             if len(name_words) >= 2:
                 yield {"type": "thinking", "data": "Searching by name"}
                 last_word = name_words[-1]
-                fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
+                fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Marketing_Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
                 try:
                     fb_result = await execute_query(fallback_q)
                     if "error" not in fb_result and fb_result.get("records"):
@@ -1527,6 +1745,10 @@ async def answer_question_stream(question, conversation_history=None, username=N
         yield {"type": "error", "data": str(e)}
 
     answer = "".join(collected) or "Found data but couldn't summarize."
+
+    # Post-verify counts in streamed answer
+    if soql_recs is not None:
+        answer = _verify_answer_counts(answer, soql_result, soql_recs, question)
 
     try:
         await save_interaction(question, soql_query, answer, route, username=username)

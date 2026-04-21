@@ -1360,11 +1360,11 @@ LEVEL_2_JOB_QUERIES = [
 # ═══════════════════════════════════════════════════════════════════════
 
 ALL_CATEGORIES = [
-    # Level 1 - Basic counts and lists
+    # ── LEVEL 1 — Simple counts (fast) ──
     ("L1 Basic Counts", 1, LEVEL_1_BASIC_COUNTS),
-    ("L1 Simple Lists", 1, LEVEL_1_SIMPLE_LISTS),
     ("L1 General", 1, LEVEL_1_MORE),
-    # Level 2 - Single filter
+
+    # ── LEVEL 2 — Single filter ──
     ("L2 Status Filter", 2, LEVEL_2_STATUS_FILTER),
     ("L2 Technology Filter", 2, LEVEL_2_TECHNOLOGY_FILTER),
     ("L2 Visa Filter", 2, LEVEL_2_VISA_FILTER),
@@ -1372,59 +1372,14 @@ ALL_CATEGORIES = [
     ("L2 Job Queries", 2, LEVEL_2_JOB_QUERIES),
     ("L2 More Status", 2, LEVEL_2_MORE_STATUS),
     ("L2 More Technology", 2, LEVEL_2_MORE_TECHNOLOGY),
-    # Level 3 - Date filtered
+
+    # ── LEVEL 3 — Date filtered ──
     ("L3 Today/Yesterday", 3, LEVEL_3_TODAY_YESTERDAY),
     ("L3 This/Last Week", 3, LEVEL_3_THIS_LAST_WEEK),
     ("L3 This/Last Month", 3, LEVEL_3_THIS_LAST_MONTH),
     ("L3 Last N Days", 3, LEVEL_3_LAST_N_DAYS),
     ("L3 Time Variations", 3, LEVEL_3_TIME_VARIATIONS),
     ("L3 More Dates", 3, LEVEL_3_MORE_DATES),
-    # Level 4 - BU-specific
-    ("L4 BU Students", 4, LEVEL_4_BU_STUDENTS),
-    ("L4 BU Submissions", 4, LEVEL_4_BU_SUBMISSIONS),
-    ("L4 BU Interviews", 4, LEVEL_4_BU_INTERVIEWS),
-    ("L4 Extra BU Date", 4, LEVEL_4_EXTRA_BU_DATE),
-    # Level 5 - Aggregation
-    ("L5 Group By", 5, LEVEL_5_GROUP_BY),
-    ("L5 Top N", 5, LEVEL_5_TOP_N),
-    ("L5 Averages", 5, LEVEL_5_AVERAGES),
-    ("L5 Interview Types", 5, LEVEL_5_INTERVIEW_TYPES),
-    ("L5 More Aggregation", 5, LEVEL_5_MORE_AGG),
-    # Level 6 - Name lookups
-    ("L6 Student Lookup", 6, LEVEL_6_STUDENT_LOOKUP),
-    ("L6 BU Manager Lookup", 6, LEVEL_6_BU_MANAGER_LOOKUP),
-    ("L6 More Names", 6, LEVEL_6_MORE_NAMES),
-    # Level 7 - Multi-filter
-    ("L7 Multi Filter", 7, LEVEL_7_MULTI_FILTER),
-    ("L7 Field Combinations", 7, LEVEL_7_FIELD_COMBINATIONS),
-    ("L7 More Combos", 7, LEVEL_7_MORE),
-    # Level 8 - Cross-table
-    ("L8 Cross Table", 8, LEVEL_8_CROSS_TABLE),
-    ("L8 Performance", 8, LEVEL_8_PERFORMANCE_QUERIES),
-    ("L8 BU Comparison", 8, LEVEL_8_BU_COMPARISON),
-    ("L8 More Cross", 8, LEVEL_8_MORE),
-    # Level 9 - Reports
-    ("L9 Reports", 9, LEVEL_9_REPORTS),
-    ("L9 Analytics", 9, LEVEL_9_ANALYTICS),
-    ("L9 More Reports", 9, LEVEL_9_MORE),
-    # Level 10 - Complex
-    ("L10 Financial", 10, LEVEL_10_FINANCIAL),
-    ("L10 Complex Analysis", 10, LEVEL_10_COMPLEX_ANALYSIS),
-    ("L10 Edge Cases", 10, LEVEL_10_EDGE_CASES),
-    ("L10 More Complex", 10, LEVEL_10_MORE),
-    # Extra coverage
-    ("L1 Extra", 1, [
-        "Show student list",
-        "Get all students",
-        "All students data",
-        "Display students",
-        "Student information",
-        "Students overview",
-        "How many total records?",
-        "Show everything we have",
-        "Complete data summary",
-        "Total count of all records",
-    ]),
     ("L3 Extra Dates", 3, [
         "Last 15 days submissions",
         "Last 25 days interviews",
@@ -1437,6 +1392,23 @@ ALL_CATEGORIES = [
         "Interviews created in last 5 days",
         "Submissions created in last 10 days",
     ]),
+    ("L3 Daily BU Reports", 3, [
+        "PreMarketing students by BU",
+        "PreMarketing count for each BU",
+        "Show PreMarketing students per business unit",
+        "Yesterday submission report by BU",
+        "Yesterday submissions per BU",
+        "How many submissions did each BU make yesterday?",
+        "Yesterday submission report by offshore manager",
+        "Yesterday submissions grouped by offshore manager",
+        "Show yesterday submissions per offshore manager",
+    ]),
+
+    # ── LEVEL 4 — BU-specific ──
+    ("L4 BU Students", 4, LEVEL_4_BU_STUDENTS),
+    ("L4 BU Submissions", 4, LEVEL_4_BU_SUBMISSIONS),
+    ("L4 BU Interviews", 4, LEVEL_4_BU_INTERVIEWS),
+    ("L4 Extra BU Date", 4, LEVEL_4_EXTRA_BU_DATE),
     ("L4 Extra BU", 4, [
         "Abhijith team overview",
         "Divya team summary",
@@ -1449,6 +1421,46 @@ ALL_CATEGORIES = [
         "Manoj BU active students",
         "Prem Kumar BU submissions this week",
     ]),
+    ("L4 Daily No Activity", 4, [
+        "Interview mandatory fields by BU",
+        "Interview mandatory fields missing by BU",
+        "Show interviews with missing mandatory fields per BU",
+        "Last 3 days no submissions by BU",
+        "BUs with no submissions in last 3 days",
+        "Which BU had zero submissions in the last 3 days?",
+        "Last 3 days no submissions by offshore manager",
+        "Offshore managers with no submissions in last 3 days",
+        "Which offshore manager had zero submissions in the last 3 days?",
+    ]),
+
+    # ── LEVEL 5 — Aggregation ──
+    ("L5 Group By", 5, LEVEL_5_GROUP_BY),
+    ("L5 Top N", 5, LEVEL_5_TOP_N),
+    ("L5 Averages", 5, LEVEL_5_AVERAGES),
+    ("L5 Interview Types", 5, LEVEL_5_INTERVIEW_TYPES),
+    ("L5 More Aggregation", 5, LEVEL_5_MORE_AGG),
+    ("L5 Weekly Sub Int", 5, [
+        "Last week submissions and interviews by BU",
+        "Last week submission and interview count per BU",
+        "Show last week submissions and interviews for each BU",
+        "Last week submissions and interviews by offshore manager",
+        "Last week submission and interview count per offshore manager",
+        "Show last week submissions and interviews for each offshore manager",
+    ]),
+    ("L5 Weekly Lead Reports", 5, [
+        "Last week confirmations with congratulations",
+        "Last week confirmed students congratulations",
+        "Show last week confirmations with congratulations message",
+        "Last week submissions and interviews by BU",
+        "Last week sub and int by BU",
+        "Last week submissions and interviews by lead",
+        "Last week sub and int by lead",
+    ]),
+
+    # ── LEVEL 6 — Name lookups ──
+    ("L6 Student Lookup", 6, LEVEL_6_STUDENT_LOOKUP),
+    ("L6 BU Manager Lookup", 6, LEVEL_6_BU_MANAGER_LOOKUP),
+    ("L6 More Names", 6, LEVEL_6_MORE_NAMES),
     ("L6 Extra Names", 6, [
         "Find student Aditya",
         "Search for Rishi",
@@ -1461,50 +1473,11 @@ ALL_CATEGORIES = [
         "Who is Chaitanya and what BU?",
         "Show Nikhil student info",
     ]),
-    ("L9 Extra Reports", 9, [
-        "Complete status report for management",
-        "BU efficiency report this quarter",
-        "Student placement tracking report",
-        "Recruiter accountability report",
-        "Technology demand supply report",
-        "Client engagement summary",
-        "Weekly highlights for leadership",
-        "Monthly business review report",
-        "Operational metrics dashboard data",
-        "Team productivity report this month",
-    ]),
-    # ── Daily Reports ──
-    ("L3 Daily BU Reports", 3, [
-        "PreMarketing students by BU",
-        "PreMarketing count for each BU",
-        "Show PreMarketing students per business unit",
-        "Yesterday submission report by BU",
-        "Yesterday submissions per BU",
-        "How many submissions did each BU make yesterday?",
-        "Yesterday submission report by offshore manager",
-        "Yesterday submissions grouped by offshore manager",
-        "Show yesterday submissions per offshore manager",
-    ]),
-    ("L4 Daily No Activity", 4, [
-        "Interview mandatory fields by BU",
-        "Interview mandatory fields missing by BU",
-        "Show interviews with missing mandatory fields per BU",
-        "Last 3 days no submissions by BU",
-        "BUs with no submissions in last 3 days",
-        "Which BU had zero submissions in the last 3 days?",
-        "Last 3 days no submissions by offshore manager",
-        "Offshore managers with no submissions in last 3 days",
-        "Which offshore manager had zero submissions in the last 3 days?",
-    ]),
-    # ── Weekly Reports ──
-    ("L5 Weekly Sub Int", 5, [
-        "Last week submissions and interviews by BU",
-        "Last week submission and interview count per BU",
-        "Show last week submissions and interviews for each BU",
-        "Last week submissions and interviews by offshore manager",
-        "Last week submission and interview count per offshore manager",
-        "Show last week submissions and interviews for each offshore manager",
-    ]),
+
+    # ── LEVEL 7 — Multi-filter ──
+    ("L7 Multi Filter", 7, LEVEL_7_MULTI_FILTER),
+    ("L7 Field Combinations", 7, LEVEL_7_FIELD_COMBINATIONS),
+    ("L7 More Combos", 7, LEVEL_7_MORE),
     ("L7 Weekly Performance", 7, [
         "Recruiter last week performance by BU submissions and interviews",
         "Recruiter wise last week submissions and interviews per BU",
@@ -1519,7 +1492,30 @@ ALL_CATEGORIES = [
         "Offshore managers with no interviews in last 2 weeks",
         "Which offshore manager had zero interviews in last 2 weeks?",
     ]),
-    # ── Monthly Reports ──
+    ("L7 Weekly Lead Perf", 7, [
+        "Last week student performance report by BU",
+        "Last week student wise performance report per BU",
+        "Show each student last week performance by BU",
+        "Last week student performance report by lead",
+        "Last week student wise performance report per lead",
+        "Show each student last week performance by lead",
+        "Last week recruiter performance report by BU",
+        "Last week recruiter wise performance report per BU",
+        "Show each recruiter last week performance by BU",
+        "Last week recruiter performance report by lead",
+        "Last week recruiter wise performance report per lead",
+        "Show each recruiter last week performance by lead",
+        "2 weeks no interviews by BU",
+        "BUs with zero interviews in 2 weeks",
+        "2 weeks no interviews by lead",
+        "Leads with zero interviews in 2 weeks",
+    ]),
+
+    # ── LEVEL 8 — Cross-table ──
+    ("L8 Cross Table", 8, LEVEL_8_CROSS_TABLE),
+    ("L8 Performance", 8, LEVEL_8_PERFORMANCE_QUERIES),
+    ("L8 BU Comparison", 8, LEVEL_8_BU_COMPARISON),
+    ("L8 More Cross", 8, LEVEL_8_MORE),
     ("L8 Monthly Performance", 8, [
         "Monthly submissions and interviews and confirmations and interview amount by BU",
         "Monthly BU wise submission interview confirmation and interview amount report",
@@ -1539,6 +1535,23 @@ ALL_CATEGORIES = [
         "Recruiter wise monthly performance report per offshore manager",
         "Show each recruiter performance this month grouped by offshore manager",
     ]),
+
+    # ── LEVEL 9 — Reports ──
+    ("L9 Reports", 9, LEVEL_9_REPORTS),
+    ("L9 Analytics", 9, LEVEL_9_ANALYTICS),
+    ("L9 More Reports", 9, LEVEL_9_MORE),
+    ("L9 Extra Reports", 9, [
+        "Complete status report for management",
+        "BU efficiency report this quarter",
+        "Student placement tracking report",
+        "Recruiter accountability report",
+        "Technology demand supply report",
+        "Client engagement summary",
+        "Weekly highlights for leadership",
+        "Monthly business review report",
+        "Operational metrics dashboard data",
+        "Team productivity report this month",
+    ]),
     ("L9 Monthly Financial", 9, [
         "Last month expenses and total expenses and per placement by BU",
         "Last month expense report with total and per placement cost per BU",
@@ -1547,33 +1560,26 @@ ALL_CATEGORIES = [
         "Job payroll vs bench payroll per BU",
         "Show job payroll and bench payroll for each BU",
     ]),
-    # ── Lead-based Weekly Reports ──
-    ("L5 Weekly Lead Reports", 5, [
-        "Last week confirmations with congratulations",
-        "Last week confirmed students congratulations",
-        "Show last week confirmations with congratulations message",
-        "Last week submissions and interviews by BU",
-        "Last week sub and int by BU",
-        "Last week submissions and interviews by lead",
-        "Last week sub and int by lead",
-    ]),
-    ("L7 Weekly Lead Perf", 7, [
-        "Last week student performance report by BU",
-        "Last week student wise performance report per BU",
-        "Show each student last week performance by BU",
-        "Last week student performance report by lead",
-        "Last week student wise performance report per lead",
-        "Show each student last week performance by lead",
-        "Last week recruiter performance report by BU",
-        "Last week recruiter wise performance report per BU",
-        "Show each recruiter last week performance by BU",
-        "Last week recruiter performance report by lead",
-        "Last week recruiter wise performance report per lead",
-        "Show each recruiter last week performance by lead",
-        "2 weeks no interviews by BU",
-        "BUs with zero interviews in 2 weeks",
-        "2 weeks no interviews by lead",
-        "Leads with zero interviews in 2 weeks",
+
+    # ── LEVEL 10 — Complex ──
+    ("L10 Financial", 10, LEVEL_10_FINANCIAL),
+    ("L10 Complex Analysis", 10, LEVEL_10_COMPLEX_ANALYSIS),
+    ("L10 Edge Cases", 10, LEVEL_10_EDGE_CASES),
+    ("L10 More Complex", 10, LEVEL_10_MORE),
+
+    # ── LAST — Heavy "list all" queries (large result sets, slow) ──
+    ("L1 Simple Lists", 1, LEVEL_1_SIMPLE_LISTS),
+    ("L1 List All Extra", 1, [
+        "Show student list",
+        "Get all students",
+        "All students data",
+        "Display students",
+        "Student information",
+        "Students overview",
+        "How many total records?",
+        "Show everything we have",
+        "Complete data summary",
+        "Total count of all records",
     ]),
 ]
 
