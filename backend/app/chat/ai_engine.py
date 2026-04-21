@@ -127,9 +127,18 @@ _VAGUE_PATTERNS = [
      "Could you specify what area? For example: students in market, submissions this week, interviews this month, or placements?"),
 ]
 
+_VAGUE_ADJECTIVES = re.compile(r'\b(?:good|best|worst|poor|strong|weak|top performing|bottom performing|impressive|great)\b', re.I)
+
 def _detect_vague_question(question):
     q = question.lower()
-    if any(w in q for w in ["how many", "how much", "count", "total", "list", "show", "give me", "get me"]):
+    is_quantitative = any(w in q for w in ["how many", "how much", "count", "total", "list", "show", "give me", "get me"])
+
+    if is_quantitative and _VAGUE_ADJECTIVES.search(question):
+        return ("Your question includes a subjective term that the database can't filter on. "
+                "Could you replace it with a measurable criteria? For example: "
+                "'students with more than 5 submissions' or 'students with 0 interviews in 14 days'.")
+
+    if is_quantitative:
         return None
     for pattern, clarification in _VAGUE_PATTERNS:
         if pattern.search(question):
@@ -196,7 +205,7 @@ async def _fuzzy_cache_lookup(question):
             if feedback == "good" and combined >= 0.85:
                 logger.info(f"Fuzzy cache HIT (verified, score={combined:.2f}): '{past_q[:60]}'")
                 return past_sql, True
-            elif feedback == "good" and combined >= 0.75:
+            elif feedback == "good" and combined >= 0.82:
                 logger.info(f"Fuzzy cache SOFT HIT (verified, score={combined:.2f}): '{past_q[:60]}'")
                 return past_sql, True
             elif combined >= 0.92:
@@ -1963,18 +1972,18 @@ async def answer_question(question, conversation_history=None, username=None, la
     original_question = question
     question = _normalize_question(question)
 
-    # Layer 1b: Detect vague/ambiguous questions → ask for clarification
-    vague_msg = _detect_vague_question(question)
-    if vague_msg:
-        logger.info(f"Vague question detected: {question[:60]}")
-        return {"answer": vague_msg, "soql": None, "data": None, "route": "CLARIFY",
-                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
-
-    # Layer 1c: Detect unanswerable questions → redirect to data
+    # Layer 1b: Detect unanswerable questions first (why/predict/should)
     unanswerable_msg = _detect_unanswerable(question)
     if unanswerable_msg:
         logger.info(f"Unanswerable question detected: {question[:60]}")
         return {"answer": unanswerable_msg, "soql": None, "data": None, "route": "CLARIFY",
+                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
+
+    # Layer 1c: Detect vague/ambiguous questions → ask for clarification
+    vague_msg = _detect_vague_question(question)
+    if vague_msg:
+        logger.info(f"Vague question detected: {question[:60]}")
+        return {"answer": vague_msg, "soql": None, "data": None, "route": "CLARIFY",
                 "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
 
     schema_text = schema_to_prompt()
@@ -2205,8 +2214,32 @@ async def answer_question(question, conversation_history=None, username=None, la
         if data_summary:
             parts.append(data_summary)
 
-    # Change 4: Template answers for simple COUNT queries — skip AI entirely
+    # Change 4: Template answers for simple COUNT/GROUP queries — skip AI entirely
     q_lower = question.lower()
+    is_group_question = any(w in q_lower for w in ["bu wise", "by bu", "tech wise", "by technology",
+                                                     "visa wise", "by visa", "status wise", "by status",
+                                                     "manager wise", "by manager"])
+    if is_group_question and soql_recs and len(soql_recs) > 1 and all("cnt" in r for r in soql_recs):
+        group_key = next((k for k in soql_recs[0] if k != "cnt"), None)
+        if group_key:
+            total = sum(r.get("cnt", 0) for r in soql_recs)
+            lines = [f"**{total:,} total** across **{len(soql_recs)} groups**\n"]
+            lines.append(f"| {group_key} | Count |")
+            lines.append("|---|---:|")
+            for r in soql_recs:
+                lines.append(f"| {r.get(group_key, 'N/A')} | {r.get('cnt', 0):,} |")
+            lines.append(f"| **Total** | **{total:,}** |")
+            template_answer = "\n".join(lines)
+            elapsed = round(time.time() - start_time, 2)
+            logger.info(f"[ROUTE=GROUP_TEMPLATE] Q='{question[:60]}' groups={len(soql_recs)} total={total} time={elapsed}s")
+            await save_interaction(question, soql_query, template_answer, route, username=username)
+            suggestions = await _generate_suggestions(question, template_answer)
+            return {
+                "answer": template_answer, "soql": soql_query, "route": route,
+                "rag_used": False, "suggestions": suggestions,
+                "data": {"totalSize": total, "records": soql_recs[:200], "query": soql_query, "route": route},
+            }
+
     is_count_question = any(w in q_lower for w in ["how many", "how much", "total", "count of"])
     if is_count_question and soql_recs and len(soql_recs) == 1:
         rec = soql_recs[0]
@@ -2249,6 +2282,10 @@ async def answer_question(question, conversation_history=None, username=None, la
     if answer and soql_recs is not None:
         answer = _verify_answer_counts(answer, soql_result, soql_recs, question)
 
+    # Result-sanity: warn if query hit the row limit
+    if soql_recs and len(soql_recs) >= 2000 and answer:
+        answer += "\n\n> **Note:** Results are capped at 2,000 rows. The actual count may be higher — please refine your query for exact numbers."
+
     elapsed = round(time.time() - start_time, 2)
     logger.info(f"[ROUTE={route}] Q='{question[:60]}' rows={len(soql_recs) if soql_recs else 0} rag={bool(rag_results)} time={elapsed}s")
     await save_interaction(question, soql_query, answer or "", route, username=username)
@@ -2279,21 +2316,21 @@ async def answer_question_stream(question, conversation_history=None, username=N
     original_question = question
     question = _normalize_question(question)
 
-    # Layer 1b: Detect vague/ambiguous questions
-    vague_msg = _detect_vague_question(question)
-    if vague_msg:
-        logger.info(f"Vague question (stream): {question[:60]}")
-        yield {"type": "token", "data": vague_msg}
-        yield {"type": "done", "data": {"answer": vague_msg, "soql": None, "data": None, "route": "CLARIFY",
-               "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
-        return
-
-    # Layer 1c: Detect unanswerable questions
+    # Layer 1b: Detect unanswerable questions first (why/predict/should)
     unanswerable_msg = _detect_unanswerable(question)
     if unanswerable_msg:
         logger.info(f"Unanswerable question (stream): {question[:60]}")
         yield {"type": "token", "data": unanswerable_msg}
         yield {"type": "done", "data": {"answer": unanswerable_msg, "soql": None, "data": None, "route": "CLARIFY",
+               "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
+        return
+
+    # Layer 1c: Detect vague/ambiguous questions
+    vague_msg = _detect_vague_question(question)
+    if vague_msg:
+        logger.info(f"Vague question (stream): {question[:60]}")
+        yield {"type": "token", "data": vague_msg}
+        yield {"type": "done", "data": {"answer": vague_msg, "soql": None, "data": None, "route": "CLARIFY",
                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
         return
 
