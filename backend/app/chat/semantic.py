@@ -14,6 +14,7 @@ Covers L1-L10 question types:
   L10: Financial, edge cases, abbreviations
 """
 import re
+import json
 import logging
 from app.database.query import execute_query
 
@@ -107,7 +108,9 @@ _ENTITY_KEYWORDS = [
                    "project started", "project completed",
                    "candidates", "candidate", "consultant", "consultants",
                    "resources", "resource", "trainees", "trainee", "people",
-                   "days in market", "dim ", "marketing status", "batch"]),
+                   "days in market", "dim ", "marketing status", "batch",
+                   "placements", "placement this", "placement last",
+                   "how many placed", "who got placed", "placed this", "placed last"]),
     ("submissions", ["submission", "submissions", "sub count", "subs ",
                       "submitted", "subs today", "subs this", "subs last",
                       "daily subs", "weekly subs", "resume sent", "resumes sent",
@@ -141,6 +144,7 @@ _STATUS_MAP = {
     "got confirmed": "Verbal Confirmation", "who got confirmed": "Verbal Confirmation",
     "vc ": "Verbal Confirmation", "verbals": "Verbal Confirmation",
     "got placed": "Verbal Confirmation", "placed": "Verbal Confirmation",
+    "placements": "Verbal Confirmation", "placement": "Verbal Confirmation",
     "got offer": "Verbal Confirmation", "received offer": "Verbal Confirmation",
     "pre marketing": "Pre Marketing", "premarketing": "Pre Marketing",
     "pre-marketing": "Pre Marketing", "not ready": "Pre Marketing",
@@ -291,56 +295,109 @@ def _detect_time(q):
     return None, None, None
 
 def _detect_bu_name(q, question):
-    patterns = [
-        r'(?:under|for|of|bu)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,4})',
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})(?:\'?s?\s+(?:student|submission|interview|bu|team|performance|subs|ints))',
+    ci_patterns = [
+        r'(?:under|for)\s+([a-z]+(?:\s+[a-z]+){1,4}?)(?:\s|$)',
+        r'(?:bu\s+)([a-z]+(?:\s+[a-z]+){0,4}?)(?:\s+student|\s+submission|\s+interview|\s+sub|\s+int|\s|$)',
     ]
-    for pat in patterns:
-        m = re.search(pat, question)
+    stop_first = {'how', 'show', 'list', 'give', 'what', 'the', 'all', 'total', 'count',
+                  'number', 'many', 'this', 'last', 'month', 'week', 'today', 'send',
+                  'weekly', 'monthly', 'daily', 'java', 'python', 'devops', 'each',
+                  'every', 'any', 'no', 'some', 'a', 'an', 'submissions', 'interviews',
+                  'students', 'that', 'which', 'in', 'is', 'are', 'with', 'wise',
+                  'report', 'leaderboard', 'ranking', 'comparison', 'performance',
+                  'today', 'yesterday', 'week', 'month', 'year', 'last', 'this',
+                  'daily', 'weekly', 'monthly', 'count', 'total', 'number',
+                  'react', 'angular', 'salesforce', 'aws', 'azure', 'net', 'dotnet',
+                  'data', 'de', 'qa', 'full', 'stack', 'science', 'sdet', 'ba',
+                  'scrum', 'master', 'sap', 'servicenow', 'tableau', 'power', 'bi',
+                  'h1', 'h4', 'opt', 'cpt', 'gc', 'visa', 'ead', 'citizen', 'usc',
+                  'placed', 'verbal', 'confirmation', 'pre', 'exit', 'market',
+                  'got', 'placement', 'placements', 'project', 'started', 'completed'}
+    for pat in ci_patterns:
+        m = re.search(pat, q)
         if m:
             name = m.group(1).strip()
-            stop = {'How', 'Show', 'List', 'Give', 'What', 'The', 'All', 'Total', 'Count',
-                    'Number', 'Many', 'This', 'Last', 'Month', 'Week', 'Today', 'Send',
-                    'Weekly', 'Monthly', 'Daily', 'Java', 'Python', 'DevOps'}
-            if name.split()[0] not in stop:
-                return name
-    # Short BU name patterns like "abhijith subs", "divya students"
+            words = [w for w in name.split() if w not in stop_first]
+            if len(words) >= 1 and len(" ".join(words)) > 2:
+                return " ".join(words).title()
+    stop_short = {'idle', 'active', 'total', 'all', 'top', 'bottom', 'best', 'worst',
+                  'no', 'zero', 'how', 'show', 'give', 'list', 'get', 'my',
+                  'java', 'python', 'devops', 'react', 'angular', 'dotnet',
+                  'salesforce', 'aws', 'azure', 'net', 'data', 'de', 'qa',
+                  'manual', 'automation', 'new', 'old', 'recent', 'many', 'the', 'me',
+                  'in', 'market', 'this', 'last', 'what', 'who', 'send', 'monthly',
+                  'weekly', 'daily', 'count', 'number', 'by', 'with', 'of', 'for',
+                  'not', 'having', 'are', 'is', 'and', 'or', 'from', 'to', 'on',
+                  'students', 'student', 'submission', 'interview', 'amount',
+                  'more', 'less', 'than', 'that', 'those', 'these', 'which', 'where',
+                  'days', 'week', 'month', 'today', 'yesterday', 'above', 'below',
+                  'rate', 'bill', 'cost', 'expense', 'total', 'average', 'avg',
+                  'h1', 'h4', 'opt', 'cpt', 'gc', 'visa', 'ead', 'citizen', 'usc',
+                  'full', 'stack', 'science', 'sdet', 'ba', 'scrum', 'master',
+                  'sap', 'servicenow', 'tableau', 'power', 'bi', 'placed',
+                  'verbal', 'confirmation', 'pre', 'exit', 'started', 'completed',
+                  'got', 'placement', 'placements', 'project'}
+    # Multi-word BU: "aryan reddy students", "give me divya panguluri students"
+    m = re.search(r'([a-z]+(?:\s+[a-z]+){1,3})\s+(?:subs|ints|students|team|performance|submissions|interviews)', q)
+    if m:
+        name = m.group(1).strip()
+        words = [w for w in name.split() if w not in stop_short]
+        if len(words) >= 2:
+            return " ".join(words).title()
+    # Short single word: "divya students" — only at start of query
     m = re.search(r'^([a-z]+)\s+(?:subs|ints|students|team|performance|submissions|interviews)', q)
     if m:
-        name = m.group(1).title()
-        stop_short = {'Idle', 'Active', 'Total', 'All', 'Top', 'Bottom', 'Best', 'Worst',
-                      'No', 'Zero', 'How', 'Show', 'Give', 'List', 'Get', 'My'}
-        if name not in stop_short:
-            return name
+        name = m.group(1)
+        if name not in stop_short and len(name) > 2:
+            return name.title()
     return None
 
 def _detect_person_name(q, question):
-    patterns = [
-        r'(?:details?\s+(?:of|for)\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:status\s+of\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:who\s+is\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:find\s+(?:student\s+)?(?:named\s+)?)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:search\s+(?:for\s+)?(?:student\s+)?)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:look\s+up\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:information\s+(?:of|for|about)\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:profile\s+(?:of|for)\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:everything\s+about\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:details|information|status|profile|submissions?|interviews?)',
-        r'(?:submissions?\s+(?:for|of)\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
-        r'(?:interviews?\s+(?:for|of)\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})',
+    ci_patterns = [
+        r'(?:details?\s+(?:of|for)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:status\s+of\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:who\s+is\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:find\s+(?:student\s+)?(?:named\s+)?)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:search\s+(?:for\s+)?(?:student\s+)?)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:look\s*up\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:information\s+(?:of|for|about)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:profile\s+(?:of|for)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:everything\s+about\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:complete\s+details?\s+(?:of|for)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:full\s+details?\s+(?:of|for)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:submissions?\s+(?:for|of)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
+        r'(?:interviews?\s+(?:for|of)\s+)([a-z]+(?:\s+[a-z]+){0,3})',
     ]
-    stop = {'Show', 'List', 'Give', 'What', 'How', 'All', 'Total', 'Find', 'Search', 'The',
-            'Students', 'Which', 'Java', 'Python', 'Send', 'Weekly', 'Monthly', 'BU'}
-    for pat in patterns:
+    stop = {'show', 'list', 'give', 'what', 'how', 'all', 'total', 'find', 'search', 'the',
+            'students', 'which', 'java', 'python', 'send', 'weekly', 'monthly', 'bu',
+            'me', 'student', 'market', 'in', 'submissions', 'interviews', 'new', 'old',
+            'recent', 'active', 'idle', 'top', 'bottom', 'best', 'worst', 'devops',
+            'react', 'angular', 'salesforce', 'aws', 'azure', 'data', 'qa', 'net'}
+    trim_words = {'today', 'yesterday', 'this', 'last', 'week', 'month', 'year',
+                  'days', 'day', 'time', 'wise', 'count', 'report', 'list',
+                  'submissions', 'interviews', 'students', 'details', 'status',
+                  'bu', 'with', 'and', 'in', 'from', 'to', 'the', 'a', 'an'}
+    for pat in ci_patterns:
+        m = re.search(pat, q)
+        if m:
+            name = m.group(1).strip()
+            words = [w for w in name.split() if w not in trim_words]
+            if len(words) >= 2 and words[0] not in stop and len(" ".join(words)) > 4:
+                return " ".join(words).title()
+    tc_patterns = [
+        r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+(?:details|information|status|profile|submissions?|interviews?)',
+    ]
+    for pat in tc_patterns:
         m = re.search(pat, question)
         if m:
             name = m.group(1).strip()
-            if name.split()[0] not in stop and len(name) > 2:
+            if name.split()[0] not in {w.title() for w in stop} and len(name) > 2:
                 return name
-    # "All students named X"
-    m = re.search(r'(?:named|name)\s+([A-Z][a-z]+)', question)
+    m = re.search(r'(?:named|name)\s+([a-z]+(?:\s+[a-z]+){0,3})', q)
     if m:
-        return m.group(1)
+        name = m.group(1).strip()
+        if name not in stop:
+            return name.title()
     return None
 
 def _detect_days_threshold(q):
@@ -376,7 +433,9 @@ def _detect_no_activity(q):
                              "no recent submission", "dormant", "inactive", "no activity",
                              "not submitted", "haven't submitted", "havent submitted",
                              "0 submission", "0 subs", "no subs",
-                             "not getting submission", "idle student", "idle"]):
+                             "not getting submission", "not having submission",
+                             "no recent sub", "without any submission",
+                             "idle student", "idle"]):
         days_m = re.search(r'(\d+)\s*(?:day|week)', q)
         if days_m:
             n = int(days_m.group(1))
@@ -387,7 +446,8 @@ def _detect_no_activity(q):
     if any(w in q for w in ["no interview", "zero interview", "no int", "without interview",
                              "not interviewed", "haven't interviewed", "havent interviewed",
                              "0 interview", "0 ints", "no ints",
-                             "not getting interview"]):
+                             "not getting interview", "not having interview",
+                             "no recent interview", "without any interview"]):
         days_m = re.search(r'(\d+)\s*(?:day|week)', q)
         if days_m:
             n = int(days_m.group(1))
@@ -451,6 +511,372 @@ async def _run(sql):
         r.pop("attributes", None)
     return recs, result
 
+# ═══════════════════════════════════════════════════════════════
+# MESSAGE GENERATION
+# ═══════════════════════════════════════════════════════════════
+
+_MESSAGE_KEYWORDS = [
+    "generate a message", "generate message", "draft a message", "draft message",
+    "write a message", "write message", "frame a message", "frame message",
+    "compose a message", "compose message", "create a message", "create message",
+    "send a message", "send message", "prepare a message", "prepare message",
+    "write an email", "draft an email", "generate email", "compose email",
+    "write a mail", "draft a mail", "send a mail",
+    "write a note", "draft a note",
+    "follow up message", "followup message", "follow-up message",
+    "reminder message", "escalation message", "warning message",
+    "nudge message", "notification message",
+    "message for", "message to", "mail for", "mail to", "email for", "email to",
+]
+
+def _is_message_request(q):
+    return any(kw in q for kw in _MESSAGE_KEYWORDS)
+
+
+def _detect_message_context(q):
+    """Detect who/what the message is about and the tone."""
+    context = {"audience": None, "reason": None, "tone": "professional", "person": None, "bu": None}
+
+    if any(w in q for w in ["idle", "no submission", "not submitted", "zero submission",
+                             "inactive", "dormant", "no activity", "not having submission",
+                             "without submission"]):
+        context["audience"] = "idle_students"
+        context["reason"] = "no recent submissions"
+    elif any(w in q for w in ["no interview", "not interviewed", "zero interview",
+                               "not having interview", "without interview"]):
+        context["audience"] = "no_interview_students"
+        context["reason"] = "no recent interviews"
+    elif any(w in q for w in ["long time in market", "too long in market", "100 days",
+                               "200 days", "300 days", "more than", "days in market"]):
+        context["audience"] = "long_market_students"
+        context["reason"] = "extended time in market"
+    elif any(w in q for w in ["confirmation", "verbal", "placed", "placement", "got offer"]):
+        context["audience"] = "placed_students"
+        context["reason"] = "verbal confirmation / placement"
+    elif any(w in q for w in ["new student", "new batch", "new joinee", "onboarding",
+                               "welcome", "orientation"]):
+        context["audience"] = "new_students"
+        context["reason"] = "new onboarding"
+    elif any(w in q for w in ["low submission", "low performance", "underperform",
+                               "poor performance", "not enough"]):
+        context["audience"] = "low_performers"
+        context["reason"] = "low submission activity"
+    elif any(w in q for w in ["all student", "all bu", "everyone", "team", "entire"]):
+        context["audience"] = "all_students"
+        context["reason"] = "general update"
+
+    if any(w in q for w in ["urgent", "asap", "immediate", "critical", "escalat"]):
+        context["tone"] = "urgent"
+    elif any(w in q for w in ["motivat", "encourage", "appreciat", "congratulat", "well done"]):
+        context["tone"] = "motivational"
+    elif any(w in q for w in ["warning", "strict", "final", "last chance"]):
+        context["tone"] = "firm"
+    elif any(w in q for w in ["gentle", "soft", "kind", "polite", "friendly"]):
+        context["tone"] = "friendly"
+
+    days_m = re.search(r'(\d+)\s*days', q)
+    if days_m:
+        context["days"] = int(days_m.group(1))
+
+    return context
+
+
+_MESSAGE_TEMPLATES = {
+    "idle_students": {
+        "professional": (
+            "Subject: Action Required — Resume Submission Activity\n\n"
+            "Hi {name},\n\n"
+            "I hope you're doing well. I noticed that there have been no submissions on your profile "
+            "in the last {days} days. In the current competitive market, consistent submission activity "
+            "is crucial for landing interviews and securing placements.\n\n"
+            "Please coordinate with your marketing team to:\n"
+            "- Update your resume with any new skills or projects\n"
+            "- Review and apply to the latest job openings\n"
+            "- Respond promptly to any recruiter outreach\n\n"
+            "Let's work together to get your profile active again. Please reach out if you need "
+            "any assistance with resume updates or job targeting.\n\n"
+            "Best regards,\n{sender}"
+        ),
+        "urgent": (
+            "Subject: URGENT — Immediate Action Required on Submissions\n\n"
+            "Hi {name},\n\n"
+            "This is an urgent notice regarding the lack of submission activity on your profile. "
+            "It has been {days} days since your last submission, which is significantly impacting "
+            "your placement timeline.\n\n"
+            "Immediate actions needed:\n"
+            "1. Contact your recruiter TODAY to discuss available positions\n"
+            "2. Update your resume if not done in the last 2 weeks\n"
+            "3. Be available for any quick submissions that come through\n\n"
+            "Please treat this as a priority. We need to see submission activity within the next 24-48 hours.\n\n"
+            "Regards,\n{sender}"
+        ),
+        "friendly": (
+            "Subject: Let's Get Your Profile Moving! \n\n"
+            "Hey {name},\n\n"
+            "Just checking in! I noticed things have been a bit quiet on the submission front "
+            "for about {days} days. No worries — let's get things rolling again!\n\n"
+            "Here are a few things that might help:\n"
+            "- Touch base with your marketing team for new opportunities\n"
+            "- Make sure your resume highlights your latest skills\n"
+            "- Let us know if you have any preferences for roles or locations\n\n"
+            "We're here to help — don't hesitate to reach out!\n\n"
+            "Cheers,\n{sender}"
+        ),
+        "firm": (
+            "Subject: Final Notice — Submission Activity Required\n\n"
+            "Hi {name},\n\n"
+            "This is a formal notice regarding the absence of any submission activity on your profile "
+            "for the past {days} days. Despite previous communications, no improvement has been observed.\n\n"
+            "Please note:\n"
+            "- Consistent submission activity is mandatory for all in-market consultants\n"
+            "- Continued inactivity may result in a review of your marketing status\n"
+            "- You are expected to have submissions within the next 48 hours\n\n"
+            "Please contact your BU manager immediately to discuss next steps.\n\n"
+            "Regards,\n{sender}"
+        ),
+    },
+    "no_interview_students": {
+        "professional": (
+            "Subject: Interview Activity Update Needed\n\n"
+            "Hi {name},\n\n"
+            "I wanted to reach out regarding your interview activity. Our records show that you haven't "
+            "had any interviews scheduled in the recent period. Interviews are a key step toward placement, "
+            "and we want to ensure you're getting enough opportunities.\n\n"
+            "Suggested next steps:\n"
+            "- Work with your recruiter to increase submission volume\n"
+            "- Review your interview preparation materials\n"
+            "- Consider expanding your target roles or technologies\n"
+            "- Practice mock interviews to boost confidence\n\n"
+            "Let's connect and discuss how we can improve your interview pipeline.\n\n"
+            "Best regards,\n{sender}"
+        ),
+    },
+    "long_market_students": {
+        "professional": (
+            "Subject: Marketing Status Review — Extended Market Duration\n\n"
+            "Hi {name},\n\n"
+            "You have been in the market for {days}+ days, and we understand that the job search "
+            "can be challenging. We want to support you in every way possible to accelerate your placement.\n\n"
+            "Let's review the following together:\n"
+            "- Resume optimization — is your resume aligned with current market demands?\n"
+            "- Technology focus — should we consider expanding to adjacent technologies?\n"
+            "- Interview readiness — do you need additional coaching or mock sessions?\n"
+            "- Location flexibility — are there other locations we should target?\n\n"
+            "Please schedule a call with your BU manager this week to create an action plan.\n\n"
+            "Best regards,\n{sender}"
+        ),
+    },
+    "placed_students": {
+        "professional": (
+            "Subject: Congratulations on Your Placement!\n\n"
+            "Hi {name},\n\n"
+            "Congratulations on receiving your verbal confirmation! This is a fantastic achievement, "
+            "and we're thrilled to see your hard work pay off.\n\n"
+            "Next steps:\n"
+            "- Please ensure all onboarding paperwork is completed promptly\n"
+            "- Coordinate with HR for background verification and documentation\n"
+            "- Confirm your project start date with your recruiter\n"
+            "- Reach out if you need any support during the transition\n\n"
+            "Wishing you all the best in your new role!\n\n"
+            "Best regards,\n{sender}"
+        ),
+        "motivational": (
+            "Subject: Amazing News — You Did It!\n\n"
+            "Hi {name},\n\n"
+            "What an incredible achievement! Your dedication and persistence have paid off, "
+            "and we couldn't be more proud. Getting placed is no small feat, and you've earned it!\n\n"
+            "A few reminders as you start this exciting new chapter:\n"
+            "- Complete all onboarding documentation on time\n"
+            "- Stay in touch with your team for any support needed\n"
+            "- Share your experience and tips with fellow consultants — your journey can inspire others!\n\n"
+            "Congratulations once again. Go make an impact!\n\n"
+            "Warm regards,\n{sender}"
+        ),
+    },
+    "new_students": {
+        "professional": (
+            "Subject: Welcome to the Team!\n\n"
+            "Hi {name},\n\n"
+            "Welcome aboard! We're excited to have you join us. Here's what you can expect "
+            "in the coming days as we get your marketing journey started:\n\n"
+            "1. **Resume Preparation** — Our team will help polish your resume for the market\n"
+            "2. **Technology Assessment** — We'll align your skills with current market demand\n"
+            "3. **Marketing Kickoff** — Your profile will go live once everything is ready\n"
+            "4. **Team Introduction** — You'll be assigned to a BU manager who will guide you\n\n"
+            "Please complete any pending documentation and reach out to your assigned manager "
+            "with any questions.\n\n"
+            "Best regards,\n{sender}"
+        ),
+    },
+    "low_performers": {
+        "professional": (
+            "Subject: Submission Activity Improvement Needed\n\n"
+            "Hi {name},\n\n"
+            "We've been reviewing submission metrics, and I wanted to discuss your current activity levels. "
+            "Your submission count is below the expected benchmark, which may affect your placement timeline.\n\n"
+            "Let's work on the following:\n"
+            "- Increase daily submission targets\n"
+            "- Broaden the scope of roles being targeted\n"
+            "- Ensure quick turnaround on recruiter requests\n"
+            "- Regular check-ins with your marketing team\n\n"
+            "I'd like to schedule a quick call to create an improvement plan. Please let me know your availability.\n\n"
+            "Best regards,\n{sender}"
+        ),
+    },
+    "all_students": {
+        "professional": (
+            "Subject: Weekly Update & Reminders\n\n"
+            "Hi Team,\n\n"
+            "Here's your weekly update and a few important reminders:\n\n"
+            "**Submission Goals:**\n"
+            "- Ensure consistent daily submissions — aim for at least 3-5 per day\n"
+            "- Respond to recruiter emails within 2 hours during business hours\n"
+            "- Keep your resume and skills matrix up to date\n\n"
+            "**Interview Preparation:**\n"
+            "- Review common interview questions for your technology stack\n"
+            "- Practice mock interviews with your peers\n"
+            "- Be punctual and professional for all scheduled interviews\n\n"
+            "**General Reminders:**\n"
+            "- Update your availability status if anything changes\n"
+            "- Communicate any concerns to your BU manager promptly\n\n"
+            "Let's have a great week ahead!\n\n"
+            "Best regards,\n{sender}"
+        ),
+    },
+}
+
+_DEFAULT_MESSAGE = (
+    "Subject: Important Update\n\n"
+    "Hi {name},\n\n"
+    "I wanted to reach out regarding your current status. "
+    "Please review the following and take necessary action:\n\n"
+    "- Review your current marketing activity\n"
+    "- Coordinate with your recruiter/BU manager\n"
+    "- Update your resume and availability as needed\n"
+    "- Respond to any pending communications\n\n"
+    "Please don't hesitate to reach out if you have any questions.\n\n"
+    "Best regards,\n{sender}"
+)
+
+
+async def _handle_message_generation(q, question):
+    from app.chat.ai_engine import _call_ai
+
+    ctx = _detect_message_context(q)
+    days = ctx.get("days", 7)
+    audience = ctx.get("audience")
+    tone = ctx.get("tone", "professional")
+
+    data_recs = []
+    data_sql = ""
+
+    if audience == "idle_students":
+        data_sql = (f'SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
+                    f's."Days_in_Market_Business__c", s."Last_Submission_Date__c" '
+                    f'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    f'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+                    f'AND s."Id" NOT IN (SELECT "Student__c" FROM "Submissions__c" '
+                    f'WHERE "Submission_Date__c" >= CURRENT_DATE - INTERVAL \'{days} days\') '
+                    f'ORDER BY s."Days_in_Market_Business__c" DESC NULLS LAST LIMIT 2000')
+    elif audience == "no_interview_students":
+        data_sql = (f'SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
+                    f's."Days_in_Market_Business__c" '
+                    f'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    f'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+                    f'AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" '
+                    f'WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'{days} days\') '
+                    f'ORDER BY s."Days_in_Market_Business__c" DESC NULLS LAST LIMIT 2000')
+    elif audience == "long_market_students":
+        data_sql = (f'SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
+                    f's."Days_in_Market_Business__c" '
+                    f'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    f'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+                    f'AND s."Days_in_Market_Business__c" >= {days} '
+                    f'ORDER BY s."Days_in_Market_Business__c" DESC NULLS LAST LIMIT 2000')
+    elif audience == "placed_students":
+        data_sql = ('SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
+                    's."Verbal_Confirmation_Date__c" '
+                    'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    'WHERE s."Student_Marketing_Status__c" = \'Verbal Confirmation\' '
+                    'ORDER BY s."Verbal_Confirmation_Date__c" DESC NULLS LAST LIMIT 200')
+    elif audience == "new_students":
+        data_sql = ('SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Batch__c", s."CreatedDate" '
+                    'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    'WHERE s."CreatedDate" >= CURRENT_DATE - INTERVAL \'7 days\' '
+                    'ORDER BY s."CreatedDate" DESC LIMIT 200')
+    elif audience == "low_performers":
+        data_sql = (f'SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
+                    f's."Days_in_Market_Business__c", '
+                    f'(SELECT COUNT(*) FROM "Submissions__c" sub WHERE sub."Student__c" = s."Id" '
+                    f'AND sub."Submission_Date__c" >= CURRENT_DATE - INTERVAL \'{days} days\') AS "Recent_Submissions" '
+                    f'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    f'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+                    f'ORDER BY "Recent_Submissions" ASC NULLS FIRST LIMIT 200')
+    elif audience == "all_students":
+        data_sql = ('SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
+                    's."Student_Marketing_Status__c", s."Days_in_Market_Business__c" '
+                    'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+                    'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+                    'ORDER BY s."Name" LIMIT 500')
+
+    if data_sql:
+        recs, _ = await _run(data_sql)
+        if recs:
+            data_recs = recs
+
+    audience_desc = {
+        "idle_students": f"students with no submissions in the last {days} days",
+        "no_interview_students": f"students with no interviews in the last {days} days",
+        "long_market_students": f"students who have been in market for {days}+ days",
+        "placed_students": "students who recently got placed (verbal confirmation)",
+        "new_students": "newly joined students (last 7 days)",
+        "low_performers": f"students with lowest submission activity in the last {days} days",
+        "all_students": "all in-market students (weekly update)",
+    }.get(audience, "students")
+
+    data_snippet = json.dumps(data_recs[:30], default=str, indent=1) if data_recs else "No matching data found."
+
+    system_prompt = (
+        "You are a professional message composer for a staffing/consulting company. "
+        "Your job is to compose a well-structured, ready-to-send message (email/notification) "
+        "based STRICTLY on the real data provided below.\n\n"
+        "ABSOLUTE RULES:\n"
+        "1. ONLY reference names, numbers, BUs, technologies, and dates that appear in the provided data.\n"
+        "2. NEVER invent, fabricate, or assume any data that is not explicitly provided.\n"
+        "3. If the data is empty or insufficient, say so honestly — do not make up examples.\n"
+        "4. Include a proper Subject line, greeting, body, and sign-off.\n"
+        "5. Reference specific student names and stats from the data to make the message actionable.\n"
+        "6. Keep the message concise but complete — a manager should be able to act on it immediately.\n"
+        f"7. Use a {tone} tone throughout.\n\n"
+        f"TARGET AUDIENCE: {audience_desc}\n"
+        f"TOTAL MATCHING STUDENTS: {len(data_recs)}\n\n"
+        f"REAL DATA (first {min(len(data_recs), 30)} of {len(data_recs)} records):\n{data_snippet}\n\n"
+        "Compose the message now. Use markdown formatting for readability."
+    )
+
+    user_msg = question
+
+    ai_message = None
+    try:
+        ai_message = await _call_ai(system_prompt, user_msg, max_tokens=3000, temperature=0.3)
+    except Exception as e:
+        logger.warning(f"AI message generation failed: {str(e)[:120]}")
+
+    if ai_message:
+        answer = f"**AI-Generated Message** ({tone.title()})\n\n---\n\n{ai_message}"
+        if data_recs:
+            answer += f"\n\n---\n**Data Source:** {len(data_recs)} {audience_desc}"
+    else:
+        templates = _MESSAGE_TEMPLATES.get(audience, {})
+        template = templates.get(tone) or templates.get("professional") or _DEFAULT_MESSAGE
+        message = template.format(name="[Student Name]", days=days, sender="[Your Name]")
+        answer = f"**Message Template** ({tone.title()})\n\n---\n\n{message}"
+        if data_recs:
+            answer += f"\n\n---\n**Applicable Students:** {len(data_recs)} {audience_desc}"
+
+    return _make_result(answer, data_sql or "-- No data query needed", data_recs or [])
+
+
 def _table_answer(title, headers, rows, totals=None, footer=""):
     lines = [f"**{title}**\n"]
     lines.append("| " + " | ".join(headers) + " |")
@@ -493,9 +919,18 @@ async def handle_semantic_query(question):
           .replace("intrvw", "interview").replace("interivew", "interview")
           .replace("  ", " "))
 
+    # ── Message generation ──────────────────────────────────
+    if _is_message_request(q):
+        return await _handle_message_generation(q, question)
+
     # ── L6: Person name lookup ──────────────────────────────
     person = _detect_person_name(q, question)
-    if person and not any(w in q for w in ["bu wise", "by bu", "manager list", "all bu"]):
+    has_entity_context = (any(w in q for w in ["submission", "interview", "sub ", "int ",
+                                               "subs ", "ints "]) and
+                          any(w in q for w in ["today", "yesterday", "this week", "last week",
+                                               "this month", "last month", "last 7", "last 30",
+                                               "for ", "under "]))
+    if person and not any(w in q for w in ["bu wise", "by bu", "manager list", "all bu"]) and not has_entity_context:
         return await _handle_person_lookup(person, q, question)
 
     # ── L1 General: stats/summary/overview ──────────────────
@@ -605,13 +1040,24 @@ async def handle_semantic_query(question):
     if "active" in q and entity in ("jobs", "managers"):
         wheres.append('"Active__c" = true')
     if days_thresh and entity == "students":
-        wheres.append(f'"Days_in_Market_Business__c" > {days_thresh}')
+        wheres.append(f'"Days_in_Market_Business__c" >= {days_thresh}')
         if not status:
             wheres.append('"Student_Marketing_Status__c" = \'In Market\'')
+
+    if bu_name:
+        if entity == "students":
+            needs_bu_join = True
+            wheres.append(f'm."Name" ILIKE \'%{bu_name}%\'')
+        elif entity == "submissions":
+            wheres.append(f'"BU_Name__c" ILIKE \'%{bu_name}%\'')
+        elif entity == "interviews":
+            wheres.append(f'm."Name" ILIKE \'%{bu_name}%\'')
 
     if time_start:
         if entity == "interviews" and ent.get("needs_join"):
             wheres.append(f'i.{ent["date_field"]} >= {time_start} AND i.{ent["date_field"]} < {time_end}')
+        elif entity == "students" and needs_bu_join:
+            wheres.append(f's.{ent["date_field"]} >= {time_start} AND s.{ent["date_field"]} < {time_end}')
         else:
             wheres.append(f'{ent["date_field"]} >= {time_start} AND {ent["date_field"]} < {time_end}')
 
@@ -634,15 +1080,6 @@ async def handle_semantic_query(question):
             wheres.append(f'i."Amount__c" < {val}')
         elif entity == "jobs":
             wheres.append(f'"Bill_Rate__c" < {val}')
-
-    if bu_name:
-        if entity == "students":
-            needs_bu_join = True
-            wheres.append(f'm."Name" ILIKE \'%{bu_name}%\'')
-        elif entity == "submissions":
-            wheres.append(f'"BU_Name__c" ILIKE \'%{bu_name}%\'')
-        elif entity == "interviews":
-            wheres.append(f'm."Name" ILIKE \'%{bu_name}%\'')
 
     where_sql = _build_where(wheres)
 
@@ -698,7 +1135,9 @@ async def _handle_count(entity, ent, wheres, needs_bu_join, desc):
         sql = f'SELECT COUNT(*) AS cnt FROM {ent.get("from_clause", ent["table"])}'
     else:
         sql = ent["count_sql"]
-        if needs_bu_join:
+        if needs_bu_join and entity == "students":
+            sql = f'SELECT COUNT(*) AS cnt FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"'
+        elif needs_bu_join:
             sql = f'SELECT COUNT(*) AS cnt FROM {ent["table"]} {ent.get("bu_join", "")}'
     sql += _build_where(wheres)
     recs, result = await _run(sql)
@@ -715,7 +1154,7 @@ async def _handle_list(entity, ent, wheres, where_sql, needs_bu_join, desc):
     elif needs_bu_join and entity == "students":
         sql = (f'SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", '
                f's."Marketing_Visa_Status__c", s."Days_in_Market_Business__c", m."Name" AS "BU_Name" '
-               f'FROM "Student__c" s {ent["bu_join"]}')
+               f'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"')
     else:
         sql = f'SELECT {ent["list_fields"]} FROM {ent["table"]}'
     order_field = f'i.{ent["name_field"]}' if entity == "interviews" and ent.get("needs_join") else ent["name_field"]
@@ -723,7 +1162,7 @@ async def _handle_list(entity, ent, wheres, where_sql, needs_bu_join, desc):
 
     count_sql = f'SELECT COUNT(*) AS cnt FROM {ent.get("from_clause", ent["table"])}'
     if needs_bu_join and entity == "students":
-        count_sql = f'SELECT COUNT(*) AS cnt FROM "Student__c" s {ent["bu_join"]}'
+        count_sql = f'SELECT COUNT(*) AS cnt FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"'
     count_sql += where_sql
 
     recs, _ = await _run(sql)
@@ -740,14 +1179,22 @@ async def _handle_group_by(entity, ent, group_field, group_label, wheres, where_
         return await _handle_bu_group(entity, ent, wheres, time_label)
 
     if entity == "interviews" and ent.get("needs_join"):
-        gf = group_field if '.' in group_field else f'i.{group_field}'
+        student_fields = {'"Technology__c"', '"Marketing_Visa_Status__c"', '"Student_Marketing_Status__c"',
+                          '"Days_in_Market_Business__c"', '"Batch__c"', '"University__c"'}
+        if group_field in student_fields:
+            gf = f's.{group_field}'
+        elif '.' in group_field:
+            gf = group_field
+        else:
+            gf = f'i.{group_field}'
         sql = f'SELECT {gf}, COUNT(*) AS cnt FROM {ent["from_clause"]}'
     else:
+        gf = group_field
         sql = f'SELECT {group_field}, COUNT(*) AS cnt FROM {ent["table"]}'
         if needs_bu_join:
             sql += f' {ent.get("bu_join", "")}'
-    extra_where = f' AND {group_field} IS NOT NULL' if where_sql else f' WHERE {group_field} IS NOT NULL'
-    sql += where_sql + extra_where + f' GROUP BY {group_field} ORDER BY cnt DESC'
+    extra_where = f' AND {gf} IS NOT NULL' if where_sql else f' WHERE {gf} IS NOT NULL'
+    sql += where_sql + extra_where + f' GROUP BY {gf} ORDER BY cnt DESC'
 
     recs, _ = await _run(sql)
     if recs is None:
@@ -792,7 +1239,28 @@ async def _handle_bu_group(entity, ent, wheres, time_label):
     if time_label:
         footer += f" ({time_label})"
     answer = _table_answer(f"{ent['label'].title()} by BU", ["BU Name", "Count"], rows, totals, footer)
-    return _make_result(answer, sql, recs)
+
+    detail_recs = []
+    if entity in ("submissions", "interviews", "students"):
+        if entity == "students":
+            qualified_fields = ent["list_fields"].replace('"Name"', '"Student__c"."Name"')
+            detail_sql = (f'SELECT {qualified_fields}, m."Name" AS "BU_Name" '
+                          f'FROM {ent["table"]} LEFT JOIN "Manager__c" m ON "Student__c"."Manager__c" = m."Id"')
+            detail_sql += _build_where(wheres) + f' ORDER BY "Student__c"."Name" LIMIT 2000'
+        elif entity == "interviews" and ent.get("needs_join"):
+            detail_sql = f'SELECT {ent["list_fields"]} FROM {ent["from_clause"]}'
+            detail_sql += _build_where(wheres) + f' ORDER BY i.{ent["date_field"]} DESC NULLS LAST LIMIT 2000'
+        else:
+            detail_sql = f'SELECT {ent["list_fields"]} FROM {ent["table"]}'
+            detail_sql += _build_where(wheres) + f' ORDER BY {ent["date_field"]} DESC NULLS LAST LIMIT 2000'
+        d_recs, _ = await _run(detail_sql)
+        if d_recs:
+            detail_recs = d_recs
+
+    all_recs = recs + detail_recs[:200]
+    result = _make_result(answer, sql, all_recs)
+    result["data"]["totalSize"] = len(detail_recs) if detail_recs else total
+    return result
 
 
 async def _handle_top_n(entity, ent, n, q, wheres, where_sql):
@@ -897,7 +1365,8 @@ async def _handle_no_activity(no_type, days, bu_name, q):
     else:
         sql = ('SELECT "Name", "Technology__c", "Days_in_Market_Business__c", "Last_Submission_Date__c" '
                'FROM "Student__c"')
-    sql += _build_where(wheres) + ' ORDER BY "Name" LIMIT 2000'
+    order_name = 's."Name"' if needs_bu_join else '"Name"'
+    sql += _build_where(wheres) + f' ORDER BY {order_name} LIMIT 2000'
 
     count_sql = f'SELECT COUNT(*) AS cnt FROM "Student__c"'
     if needs_bu_join:
