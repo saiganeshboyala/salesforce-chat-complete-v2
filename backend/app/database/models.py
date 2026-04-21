@@ -899,7 +899,6 @@ class BS(Base):
     Caluculated_Pay_Rate__c = Column(Float)
     Month__c = Column(Text)
     Year__c = Column(Text)
-    Hours__c = Column(Float)
     Invoice_Amount__c = Column(Float)
     Actual_Salary__c = Column(Float)
     Salary_Paid__c = Column(Float)

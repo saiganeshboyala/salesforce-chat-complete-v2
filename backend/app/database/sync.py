@@ -1144,7 +1144,7 @@ async def _sync_bs(session, last_sync=None):
     mode = "incremental" if last_sync else "full"
     logger.info(f"Syncing BS__c ({mode})...")
 
-    soql_fields = "Id, Name, CreatedDate, CreatedById, LastModifiedDate, LastModifiedById, LastActivityDate, LastViewedDate, LastReferencedDate, Student__c, BU_Name__c, Vendor_Name__c, Bill_Rate__c, PayRate__c, Caluculated_Pay_Rate__c, Month__c, Year__c, Hours__c, Invoice_Amount__c, Actual_Salary__c, Salary_Paid__c, Insurance__c, H1fee__c, Other_Amounts__c, Pending_Amount__c, Payroll_Taxes__c, Gross_Profit__c, DOJ__c, Company_Name__c, Payment_Type__c"
+    soql_fields = "Id, Name, CreatedDate, CreatedById, LastModifiedDate, LastModifiedById, LastActivityDate, LastViewedDate, LastReferencedDate, Student__c, BU_Name__c, Vendor_Name__c, Bill_Rate__c, PayRate__c, Caluculated_Pay_Rate__c, Month__c, Year__c, Invoice_Amount__c, Actual_Salary__c, Salary_Paid__c, Insurance__c, H1fee__c, Other_Amounts__c, Pending_Amount__c, Payroll_Taxes__c, Gross_Profit__c, DOJ__c, Company_Name__c, Payment_Type__c"
     records = await _fetch_all(f"SELECT {soql_fields} FROM BS__c{since}")
 
     now = datetime.utcnow()
@@ -1168,7 +1168,6 @@ async def _sync_bs(session, last_sync=None):
             "Caluculated_Pay_Rate__c": r.get("Caluculated_Pay_Rate__c"),
             "Month__c": r.get("Month__c"),
             "Year__c": r.get("Year__c"),
-            "Hours__c": r.get("Hours__c"),
             "Invoice_Amount__c": r.get("Invoice_Amount__c"),
             "Actual_Salary__c": r.get("Actual_Salary__c"),
             "Salary_Paid__c": r.get("Salary_Paid__c"),
