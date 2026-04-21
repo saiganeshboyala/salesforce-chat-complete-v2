@@ -17,6 +17,13 @@ from app.chat.semantic import handle_semantic_query
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_sql_input(value):
+    """Strip SQL injection characters from values interpolated into SQL strings."""
+    if not value:
+        return value
+    return re.sub(r"[;'\"\-\-\\/*]", "", str(value)).strip()
+
+
 # ── Layer 1: Synonym / Slang Expansion ─────────────────────────────
 _SYNONYM_MAP = {
     # Status synonyms
@@ -1067,7 +1074,8 @@ async def _call_ai(system, message, max_tokens=2000, provider=None, temperature=
 
     def _claude():
         from anthropic import Anthropic
-        r = Anthropic(api_key=settings.anthropic_api_key).messages.create(
+        import httpx
+        r = Anthropic(api_key=settings.anthropic_api_key, timeout=httpx.Timeout(45.0, connect=10.0)).messages.create(
             model=settings.claude_model, max_tokens=max_tokens, system=system,
             temperature=temperature, messages=msgs)
         return r.content[0].text
@@ -1121,7 +1129,8 @@ async def _call_ai_stream(system, message, max_tokens=2000):
     if settings.anthropic_api_key:
         try:
             from anthropic import Anthropic
-            client = Anthropic(api_key=settings.anthropic_api_key)
+            import httpx
+            client = Anthropic(api_key=settings.anthropic_api_key, timeout=httpx.Timeout(60.0, connect=10.0))
             with client.messages.stream(
                 model=settings.claude_model, max_tokens=max_tokens,
                 system=system, messages=msgs,
@@ -2034,7 +2043,7 @@ async def answer_question(question, conversation_history=None, username=None, la
         if soql_recs is None or (soql_recs is not None and len(soql_recs) == 0):
             name_words = [w for w in question.split() if len(w) > 2 and w[0].isupper()]
             if len(name_words) >= 2:
-                last_word = name_words[-1]
+                last_word = _sanitize_sql_input(name_words[-1])
                 fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Marketing_Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
                 try:
                     fb_result = await execute_query(fallback_q)
@@ -2425,7 +2434,7 @@ async def answer_question_stream(question, conversation_history=None, username=N
             name_words = [w for w in question.split() if len(w) > 2 and w[0].isupper()]
             if len(name_words) >= 2:
                 yield {"type": "thinking", "data": "Searching by name"}
-                last_word = name_words[-1]
+                last_word = _sanitize_sql_input(name_words[-1])
                 fallback_q = f"""SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", m."Name" AS "BU_Name", s."Phone__c", s."Marketing_Email__c", s."Marketing_Visa_Status__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Name" ILIKE '%{last_word}%' LIMIT 50"""
                 try:
                     fb_result = await execute_query(fallback_q)

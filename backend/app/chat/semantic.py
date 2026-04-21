@@ -20,6 +20,13 @@ from app.database.query import execute_query
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize(value):
+    """Strip SQL injection characters from user-extracted values used in ILIKE clauses."""
+    if not value:
+        return value
+    return re.sub(r"[;'\"\-\-\\/*]", "", value).strip()
+
 # ═══════════════════════════════════════════════════════════════
 # ENTITY DEFINITIONS
 # ═══════════════════════════════════════════════════════════════
@@ -937,7 +944,7 @@ async def handle_semantic_query(question):
         return await _handle_message_generation(q, question)
 
     # ── L6: Person name lookup ──────────────────────────────
-    person = _detect_person_name(q, question)
+    person = _sanitize(_detect_person_name(q, question))
     has_entity_context = (any(w in q for w in ["submission", "interview", "sub ", "int ",
                                                "subs ", "ints "]) and
                           any(w in q for w in ["today", "yesterday", "this week", "last week",
@@ -981,7 +988,7 @@ async def handle_semantic_query(question):
                              "sub to interview", "interview to placement",
                              "how many convert", "what percentage",
                              "strike rate", "win rate"]):
-        bu_name = _detect_bu_name(q, question)
+        bu_name = _sanitize(_detect_bu_name(q, question))
         return await _handle_conversion_rate(q, bu_name)
 
     # ── L9: BU leaderboard / scorecard ─────────────────────
@@ -1007,14 +1014,17 @@ async def handle_semantic_query(question):
                              "submissions interviews confirmation",
                              "all metrics", "all numbers bu",
                              "weekly bu", "bu weekly"]):
-        bu_name = _detect_bu_name(q, question)
+        bu_name = _sanitize(_detect_bu_name(q, question))
         time_start, time_end, time_label = _detect_time(q)
         return await _handle_bu_full_report(q, bu_name, time_start, time_end, time_label)
 
     # ── L8: No-activity queries (always about students, check before entity detection)
     no_act_type, no_act_days = _detect_no_activity(q)
     if no_act_type:
-        bu_name = _detect_bu_name(q, question)
+        bu_name = _sanitize(_detect_bu_name(q, question))
+        top_n = _detect_top_n(q)
+        if top_n:
+            return await _handle_no_activity_top_n(no_act_type, no_act_days, bu_name, abs(top_n), top_n < 0, q)
         return await _handle_no_activity(no_act_type, no_act_days, bu_name, q)
 
     entity = _detect_entity(q)
@@ -1023,10 +1033,10 @@ async def handle_semantic_query(question):
 
     ent = ENTITIES[entity]
     status = _detect_status(q)
-    tech = _detect_tech(q)
+    tech = _sanitize(_detect_tech(q))
     visa = _detect_visa(q)
     time_start, time_end, time_label = _detect_time(q)
-    bu_name = _detect_bu_name(q, question)
+    bu_name = _sanitize(_detect_bu_name(q, question))
     days_thresh = _detect_days_threshold(q)
     group_field, group_label = _detect_group_by(q, entity)
     top_n = _detect_top_n(q)
@@ -1412,6 +1422,38 @@ async def _handle_no_activity(no_type, days, bu_name, q):
     bu_desc = f" under {bu_name}" if bu_name else ""
     answer = f"**{total:,} in-market students** with no {no_type} in {days} days{bu_desc}."
     return _make_result(answer, sql, recs, total)
+
+
+async def _handle_no_activity_top_n(no_type, days, bu_name, n, is_bottom, q):
+    """Handle compound queries like 'top 5 students with no submissions under Divya'."""
+    wheres = ['"Student_Marketing_Status__c" = \'In Market\'']
+
+    if no_type == "submissions":
+        wheres.append(f'("Last_Submission_Date__c" < CURRENT_DATE - INTERVAL \'{days} days\' OR "Last_Submission_Date__c" IS NULL)')
+    elif no_type == "interviews":
+        wheres.append(f'"Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'{days} days\')')
+
+    needs_bu_join = bool(bu_name)
+    if bu_name:
+        wheres.append(f'm."Name" ILIKE \'%{bu_name}%\'')
+
+    order_dir = "ASC" if is_bottom else "DESC"
+    order_field = 's."Days_in_Market_Business__c"' if needs_bu_join else '"Days_in_Market_Business__c"'
+    if needs_bu_join:
+        sql = (f'SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Days_in_Market_Business__c", s."Last_Submission_Date__c" '
+               f'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"')
+    else:
+        sql = ('SELECT "Name", "Technology__c", "Days_in_Market_Business__c", "Last_Submission_Date__c" '
+               'FROM "Student__c"')
+    sql += _build_where(wheres) + f' ORDER BY {order_field} {order_dir} NULLS LAST LIMIT {n}'
+
+    recs, _ = await _run(sql)
+    if recs is None:
+        return None
+    label = "Bottom" if is_bottom else "Top"
+    bu_desc = f" under {bu_name}" if bu_name else ""
+    answer = f"**{label} {n} in-market students** with no {no_type} in {days} days{bu_desc}."
+    return _make_result(answer, sql, recs)
 
 
 async def _handle_person_lookup(person, q, question):
