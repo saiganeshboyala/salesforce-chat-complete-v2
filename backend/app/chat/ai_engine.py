@@ -6,14 +6,156 @@ queries as examples to write better SQL over time.
 Users can thumbs-up/down answers to train it.
 """
 import json, logging, re, time
+from difflib import SequenceMatcher
 from app.config import settings
 from app.salesforce.schema import schema_to_prompt, get_schema
 from app.database.query import execute_query
 from app.chat.rag import search as rag_search, is_indexed
-from app.chat.memory import save_interaction, get_learning_examples_prompt
+from app.chat.memory import save_interaction, get_learning_examples_prompt, find_similar_past_queries
 from app.chat.semantic import handle_semantic_query
 
 logger = logging.getLogger(__name__)
+
+
+# ── Layer 1: Synonym / Slang Expansion ─────────────────────────────
+_SYNONYM_MAP = {
+    # Status synonyms
+    "bench": "in market", "on bench": "in market", "benched": "in market",
+    "marketing": "in market", "on market": "in market",
+    "placed": "project started", "got placed": "project started",
+    "started project": "project started", "joined": "project started",
+    "confirmed": "verbal confirmation", "got confirmed": "verbal confirmation",
+    "verbal": "verbal confirmation", "vc": "verbal confirmation",
+    "exited": "exit", "left": "exit", "gone": "exit", "quit": "exit",
+    "training": "pre marketing", "premarketing": "pre marketing",
+    "pre-marketing": "pre marketing",
+    # Entity synonyms
+    "subs": "submissions", "sub": "submissions",
+    "ints": "interviews", "int": "interviews",
+    "confs": "confirmations", "conf": "confirmations",
+    "conformation": "confirmation", "conformations": "confirmations",
+    "stds": "students", "std": "students",
+    # Time synonyms
+    "ytd": "yesterday", "yday": "yesterday", "yest": "yesterday",
+    "tmrw": "tomorrow", "2day": "today", "2morrow": "tomorrow",
+    "lw": "last week", "tw": "this week", "lm": "last month", "tm": "this month",
+    # Tech synonyms
+    "dotnet": ".NET", "dot net": ".NET",
+    "sf": "salesforce", "sfdc": "SFDC",
+    "powerbi": "PowerBI", "power bi": "PowerBI",
+    "devops": "DevOps", "dev ops": "DevOps",
+    "servicenow": "Service Now", "service now": "Service Now",
+    "ds": "DS/AI", "data science": "DS/AI", "ai/ml": "DS/AI",
+    "ba": "Business Analyst", "business analyst": "Business Analyst",
+    "rpa": "RPA", "sap": "SAP BTP",
+    # Visa synonyms
+    "h1b": "H1", "h-1b": "H1", "h1 visa": "H1",
+    "h4ead": "H4 EAD", "h4 ead": "H4 EAD",
+    "opt visa": "OPT", "stem opt": "STEM",
+    "green card": "GC", "gc ead": "GC",
+    "us citizen": "USC", "citizen": "USC",
+    # Action synonyms
+    "gimme": "give me", "lemme": "let me", "wanna": "want to",
+    "gonna": "going to", "gotta": "got to",
+    "pls": "please", "plz": "please", "thx": "thanks",
+    # BU / role synonyms
+    "bu": "business unit", "mgr": "manager", "mgrs": "managers",
+    "lead": "offshore manager", "leads": "offshore managers",
+    # Common misspellings
+    "submisions": "submissions", "submision": "submission",
+    "interveiw": "interview", "interveiws": "interviews",
+    "studnet": "student", "studnets": "students",
+    "manger": "manager", "mangers": "managers",
+    "tecnology": "technology", "technolgy": "technology",
+    "perfomance": "performance", "preformance": "performance",
+}
+
+_ABBREVIATION_PATTERNS = [
+    (re.compile(r'\bhw\s+many\b', re.I), "how many"),
+    (re.compile(r'\bwht\b', re.I), "what"),
+    (re.compile(r'\bshw\b', re.I), "show"),
+    (re.compile(r'\blst\b', re.I), "list"),
+    (re.compile(r'\bno\.\s*of\b', re.I), "number of"),
+    (re.compile(r'\b#\s*of\b', re.I), "number of"),
+    (re.compile(r'\bw/\b', re.I), "with"),
+    (re.compile(r'\bw/o\b', re.I), "without"),
+    (re.compile(r'\bb/w\b', re.I), "between"),
+    (re.compile(r'\bbu\s*wise\b', re.I), "BU wise"),
+    (re.compile(r'\btech\s*wise\b', re.I), "technology wise"),
+]
+
+
+_SYNONYM_PATTERNS = None
+
+def _get_synonym_patterns():
+    global _SYNONYM_PATTERNS
+    if _SYNONYM_PATTERNS is None:
+        _SYNONYM_PATTERNS = []
+        for slang, expanded in sorted(_SYNONYM_MAP.items(), key=lambda x: -len(x[0])):
+            pattern = re.compile(r'\b' + re.escape(slang) + r'\b', re.IGNORECASE)
+            _SYNONYM_PATTERNS.append((pattern, expanded))
+    return _SYNONYM_PATTERNS
+
+
+def _normalize_question(question):
+    """Expand synonyms, fix slang, normalize abbreviations before any handler sees the question."""
+    q = question.strip()
+    if not q:
+        return q
+
+    for pattern, replacement in _ABBREVIATION_PATTERNS:
+        q = pattern.sub(replacement, q)
+
+    for pattern, expanded in _get_synonym_patterns():
+        q = pattern.sub(expanded, q)
+
+    if q != question.strip():
+        logger.info(f"Normalized: '{question.strip()[:80]}' → '{q[:80]}'")
+    return q
+
+
+# ── Layer 3: Fuzzy Cache Short-Circuit ─────────────────────────────
+
+async def _fuzzy_cache_lookup(question):
+    """Check learning_memory for a very similar verified question. Returns (sql, True) or (None, False)."""
+    try:
+        examples = await find_similar_past_queries(question, top_k=10)
+        if not examples:
+            return None, False
+
+        q_lower = question.lower().strip()
+        q_words = set(q_lower.split())
+
+        for ex in examples:
+            past_q = ex["past_question"].lower().strip()
+            past_sql = ex.get("past_soql", "")
+            feedback = ex.get("feedback", "none")
+
+            if not past_sql or not past_sql.strip().upper().startswith("SELECT"):
+                continue
+
+            ratio = SequenceMatcher(None, q_lower, past_q).ratio()
+
+            past_words = set(past_q.split())
+            overlap = len(q_words & past_words)
+            union = len(q_words | past_words)
+            jaccard = overlap / union if union else 0
+
+            combined = (ratio * 0.6) + (jaccard * 0.4)
+
+            if feedback == "good" and combined >= 0.85:
+                logger.info(f"Fuzzy cache HIT (verified, score={combined:.2f}): '{past_q[:60]}'")
+                return past_sql, True
+            elif feedback == "good" and combined >= 0.75:
+                logger.info(f"Fuzzy cache SOFT HIT (verified, score={combined:.2f}): '{past_q[:60]}'")
+                return past_sql, True
+            elif combined >= 0.92:
+                logger.info(f"Fuzzy cache HIT (unverified, score={combined:.2f}): '{past_q[:60]}'")
+                return past_sql, True
+
+    except Exception as e:
+        logger.warning(f"Fuzzy cache lookup failed: {str(e)[:80]}")
+    return None, False
 
 # ── Dynamic Picklist Values (loaded from DB on first use) ─────────
 _picklist_cache = None
@@ -1354,6 +1496,54 @@ def _validate_soql_fields(soql):
     return None
 
 
+async def _validate_picklist_values(soql):
+    """Check if WHERE clause uses valid picklist values. Returns warning string or None."""
+    picklists = await _load_picklist_values()
+    if not picklists:
+        return None
+
+    field_to_picklist = {
+        "Student_Marketing_Status__c": "Student_Marketing_Status__c",
+        "Marketing_Visa_Status__c": "Marketing_Visa_Status__c",
+        "Technology__c": "Technology__c",
+        "Submission_Status__c": "Submission_Status__c",
+        "Type__c": "Interview_Type__c",
+        "Final_Status__c": "Interview_Final_Status__c",
+        "Project_Type__c": "Job_Project_Type__c",
+        "Deptment__c": "Employee_Deptment__c",
+    }
+
+    warnings = []
+    for field_name, picklist_key in field_to_picklist.items():
+        valid_vals = picklists.get(picklist_key, [])
+        if not valid_vals:
+            continue
+        pattern = rf'"{re.escape(field_name)}"\s*=\s*\'([^\']+)\''
+        for m in re.finditer(pattern, soql):
+            used_val = m.group(1)
+            if used_val not in valid_vals:
+                close = [v for v in valid_vals if v.lower() == used_val.lower()]
+                if close:
+                    warnings.append(f"{field_name}: '{used_val}' should be '{close[0]}'")
+                else:
+                    best = None
+                    best_ratio = 0
+                    for v in valid_vals:
+                        r = SequenceMatcher(None, used_val.lower(), v.lower()).ratio()
+                        if r > best_ratio:
+                            best_ratio = r
+                            best = v
+                    if best and best_ratio >= 0.6:
+                        warnings.append(f"{field_name}: '{used_val}' → did you mean '{best}'?")
+                    else:
+                        warnings.append(f"{field_name}: '{used_val}' not in valid values: {', '.join(valid_vals[:10])}")
+
+    if warnings:
+        logger.warning(f"Picklist validation: {'; '.join(warnings)}")
+        return "; ".join(warnings)
+    return None
+
+
 async def _pick_objects(question, schema_text):
     """Step 1: AI picks the right object(s) for the question."""
     raw = await _call_ai(
@@ -1427,7 +1617,22 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         if cached:
             return cached
 
-    # Step 0: Try direct pattern match (instant, no AI call needed)
+    # Step 0a: Try fuzzy cache (reuse verified SQL from learning_memory)
+    if not last_soql:
+        cached_sql, found = await _fuzzy_cache_lookup(question)
+        if found and cached_sql:
+            cached_sql, _ = _auto_fix_sql(cached_sql)
+            result = await execute_query(cached_sql)
+            if "error" not in result and result.get("records"):
+                recs = result.get("records", [])
+                for r in recs:
+                    r.pop("attributes", None)
+                logger.info(f"Fuzzy cache served {len(recs)} records")
+                _cache_set(question, cached_sql, result, recs)
+                return cached_sql, result, recs
+            logger.info("Fuzzy cache SQL failed, falling through to AI")
+
+    # Step 0b: Try direct pattern match (instant, no AI call needed)
     if not last_soql:
         pattern_match = _match_report_pattern(question)
         if pattern_match:
@@ -1506,6 +1711,20 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
             fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
             if fix.upper().startswith("SELECT"):
                 logger.info(f"SQL fixed (validation): {fix[:200]}")
+                q = fix
+
+    # Pre-validate picklist values
+    picklist_warning = await _validate_picklist_values(q)
+    if picklist_warning:
+        obj_hint = _extract_object_fields_hint(q, schema_text)
+        fix = await _call_ai(SOQL_PROMPT,
+            f"Picklist value errors: {picklist_warning}\nQuery: {q}\n{picklist_prompt}\n{obj_hint}\nFix the picklist values to use EXACT values from the ACTUAL PICKLIST VALUES list.",
+            500, temperature=0)
+        if fix:
+            fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
+            if fix.upper().startswith("SELECT"):
+                fix, _ = _auto_fix_sql(fix)
+                logger.info(f"SQL fixed (picklist): {fix[:200]}")
                 q = fix
 
     result = await execute_query(q)
@@ -1616,7 +1835,6 @@ def _verify_answer_counts(answer, soql_result, soql_recs, question):
                     first_val = int(v)
                     break
             if first_val is not None:
-                # Check if answer has a different number
                 nums_in_answer = re.findall(r'[\d,]+', answer)
                 nums_in_answer = [int(n.replace(",", "")) for n in nums_in_answer if n.replace(",", "").isdigit() and int(n.replace(",", "")) > 0]
                 if nums_in_answer and nums_in_answer[0] != first_val:
@@ -1626,15 +1844,45 @@ def _verify_answer_counts(answer, soql_result, soql_recs, question):
                     answer = answer.replace(f"{wrong_num:,}", correct, 1)
                     logger.info(f"Answer count corrected: {wrong_num} -> {first_val}")
 
+        # For GROUP BY queries, verify breakdown totals add up
+        if len(soql_recs) > 1 and all("cnt" in r or "count" in r for r in soql_recs[:3]):
+            db_total = sum(int(r.get("cnt") or r.get("count", 0)) for r in soql_recs)
+            if db_total > 0:
+                nums_in_answer = re.findall(r'\*\*(\d[\d,]*)\*\*', answer)
+                if nums_in_answer:
+                    for num_str in nums_in_answer:
+                        num_val = int(num_str.replace(",", ""))
+                        if num_val != db_total and abs(num_val - db_total) > 2:
+                            if num_val == len(soql_recs):
+                                answer = answer.replace(f"**{num_str}**", f"**{db_total:,}**", 1)
+                                logger.info(f"Breakdown total corrected: {num_val} -> {db_total}")
+                                break
+
         # For list queries where LIMIT was hit, ensure answer uses true total
         if soql_result.get("_limited") and total > len(soql_recs):
             shown = len(soql_recs)
-            # If answer says the shown count instead of true total
             shown_str = f"{shown:,}"
             total_str = f"{total:,}"
             if f"**{shown_str}" in answer and shown_str != total_str:
                 answer = answer.replace(f"**{shown_str}", f"**{total_str}", 1)
                 logger.info(f"Answer total corrected: {shown} -> {total}")
+
+        # Verify no fabricated names: check that names in the answer appear in the data
+        if len(soql_recs) <= 30:
+            data_names = set()
+            for r in soql_recs:
+                for k, v in r.items():
+                    if isinstance(v, str) and k in ("Name", "Student_Name__c", "Student_Name", "BU_Name__c", "BU_Name", "BU_Manager"):
+                        data_names.add(v.strip())
+            if data_names and len(data_names) <= 50:
+                name_pattern = re.compile(r'\|\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*\|')
+                for m in name_pattern.finditer(answer):
+                    found_name = m.group(1).strip()
+                    if found_name not in data_names and found_name != "Total":
+                        close = [n for n in data_names if n.lower() == found_name.lower()]
+                        if close:
+                            answer = answer.replace(found_name, close[0])
+                            logger.info(f"Name case corrected: '{found_name}' -> '{close[0]}'")
 
     except Exception as e:
         logger.warning(f"Answer verification failed: {e}")
@@ -1655,6 +1903,10 @@ def _is_whatsapp_report(question):
 # ── Main Answer Functions ────────────────────────────────────────
 
 async def answer_question(question, conversation_history=None, username=None, last_soql=None):
+    # Layer 1: Normalize question (expand synonyms, fix slang/typos)
+    original_question = question
+    question = _normalize_question(question)
+
     schema_text = schema_to_prompt()
     if not schema_text or "No schema" in schema_text:
         return {"answer": "Schema not loaded. Run: python -m scripts.refresh_schema", "soql": None, "data": None}
@@ -1924,6 +2176,10 @@ async def answer_question_stream(question, conversation_history=None, username=N
     """
     Async generator yielding structured events for Server-Sent Events.
     """
+    # Layer 1: Normalize question
+    original_question = question
+    question = _normalize_question(question)
+
     schema_text = schema_to_prompt()
     if not schema_text or "No schema" in schema_text:
         msg = "Schema not loaded. Run: python -m scripts.refresh_schema"
