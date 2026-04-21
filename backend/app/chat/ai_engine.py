@@ -622,6 +622,12 @@ async def _handle_direct_report(question):
     if not (is_monthly or is_weekly or is_bu_wise):
         return None
 
+    # If a specific BU name is mentioned (e.g. "for BU Divya"), skip aggregate
+    # and let the AI/template handle BU-specific queries
+    bu_name_match = re.search(r'\bfor\s+bu\s+(.+)', q_lower)
+    if bu_name_match:
+        return None
+
     # Determine time range
     if "last month" in q_lower:
         time_val, time_label = "LAST_MONTH", "Last Month"
@@ -1001,6 +1007,15 @@ A: SELECT "BU_Name__c", COUNT(*) AS student_count FROM "Student__c" s LEFT JOIN 
 
 Q: "details of Sai Ganesh Chinnamsetty"
 A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c", "Phone__c", "Marketing_Email__c", "Personal_Email__c", "Marketing_Visa_Status__c", "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c", "Project_Start_Date__c" FROM "Student__c" WHERE "Name" ILIKE '%Chinnamsetty%' LIMIT 2000
+
+Q: "List all students under BU Divya Panguluri"
+A: SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE m."Name" ILIKE '%Divya Panguluri%' ORDER BY s."Name" LIMIT 2000
+
+Q: "List all in-market students with technology DS/AI"
+A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c", "Last_Submission_Date__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Technology__c" = 'DS/AI' LIMIT 2000
+
+Q: "List all in-market students with 61 to 90 days in market"
+A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c", "Last_Submission_Date__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Days_in_Market_Business__c" >= 61 AND "Days_in_Market_Business__c" <= 90 ORDER BY "Days_in_Market_Business__c" DESC LIMIT 2000
 
 Q: "last week interviews by BU"
 A: SELECT m."Name" AS "BU_Name", s."Name" AS "Student_Name", i."Type__c", i."Final_Status__c", i."Amount__c", i."Interview_Date1__c" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND i."Interview_Date1__c" < DATE_TRUNC('week', CURRENT_DATE) ORDER BY m."Name" LIMIT 2000

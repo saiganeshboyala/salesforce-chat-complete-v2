@@ -105,7 +105,7 @@ async def compute_analytics():
         bu = r.get("BU_Name__c") or "Unknown"
         bu_counts[bu] = bu_counts.get(bu, 0) + 1
     bu_sub_data = sorted(
-        [{"name": k, "value": v, "drilldown": f"Show all submissions this month for BU {k}"}
+        [{"name": k, "value": v, "drilldown": f"Show performance of {k} this month"}
          for k, v in bu_counts.items()],
         key=lambda x: -x["value"]
     )
@@ -351,7 +351,7 @@ async def compute_analytics():
             "students": students,
             "inMarket": in_market,
             "verbals": verbals,
-            "drilldown": f"Show all students under BU {name}",
+            "drilldown": f"List all students under BU {name}",
         })
     cards.append({
         "id": "bu_efficiency",

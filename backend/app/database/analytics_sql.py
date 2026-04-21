@@ -123,7 +123,7 @@ async def compute_analytics():
             "interviews": ints,
             "confirmations": confs,
             "amount": amount,
-            "drilldown": f"Show monthly submissions and interviews for BU {bu}",
+            "drilldown": f"Show performance of {bu} this month",
         })
     bu_report_data.sort(key=lambda x: x["submissions"] + x["interviews"], reverse=True)
 
@@ -336,7 +336,7 @@ async def compute_analytics():
             "students": r.get("Students_Count__c") or 0,
             "inMarket": r.get("In_Market_Students_Count__c") or 0,
             "verbals": r.get("Verbal_Count__c") or 0,
-            "drilldown": f"Show all students under BU {r['Name']}",
+            "drilldown": f"List all students under BU {r['Name']}",
         }
         for r in bu_expense
     ]
