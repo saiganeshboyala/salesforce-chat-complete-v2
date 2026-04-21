@@ -145,12 +145,13 @@ _VAGUE_PATTERNS = [
 ]
 
 _VAGUE_ADJECTIVES = re.compile(r'\b(?:good|best|worst|poor|strong|weak|top performing|bottom performing|impressive|great)\b', re.I)
+_STATUS_CONTEXT = re.compile(r'\b(?:status|final.status|type|category|result)\b', re.I)
 
 def _detect_vague_question(question):
     q = question.lower()
     is_quantitative = any(w in q for w in ["how many", "how much", "count", "total", "list", "show", "give me", "get me"])
 
-    if is_quantitative and _VAGUE_ADJECTIVES.search(question):
+    if is_quantitative and _VAGUE_ADJECTIVES.search(question) and not _STATUS_CONTEXT.search(question):
         return ("Your question includes a subjective term that the database can't filter on. "
                 "Could you replace it with a measurable criteria? For example: "
                 "'students with more than 5 submissions' or 'students with 0 interviews in 14 days'.")
