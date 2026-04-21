@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from './services/api'
-import DataChart from './components/DataChart'
 import DataTable from './components/DataTable'
 import SOQLBlock from './components/SOQLBlock'
 import MessageActions from './components/MessageActions'
@@ -632,7 +631,6 @@ export default function App() {
                       )}
                       {msg.role === 'assistant' && !msg.isError && (
                         <>
-                          {msg.data?.records?.length > 0 && <DataChart records={msg.data.records} totalSize={msg.data.totalSize} />}
                           {msg.data?.records?.length > 0 && <DataTable records={msg.data.records} totalSize={msg.data.totalSize} />}
                           <SOQLBlock soql={msg.soql} route={msg.data?.route} />
                           {!msg.streaming && (

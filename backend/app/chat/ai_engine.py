@@ -11,6 +11,7 @@ from app.salesforce.schema import schema_to_prompt, get_schema
 from app.database.query import execute_query
 from app.chat.rag import search as rag_search, is_indexed
 from app.chat.memory import save_interaction, get_learning_examples_prompt
+from app.chat.semantic import handle_semantic_query
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,165 @@ _PG_TIME_RANGES = {
     "TODAY":       ("CURRENT_DATE", "CURRENT_DATE + INTERVAL '1 day'"),
     "YESTERDAY":   ("CURRENT_DATE - INTERVAL '1 day'", "CURRENT_DATE"),
 }
+
+
+async def _handle_direct_report(question):
+    """Handle report-type questions by running aggregate SQL and building the answer server-side.
+    Returns (answer_text, sql_used, data_payload) or None if not a report question."""
+    q_lower = question.lower().replace("conformation", "confirmation").replace("submision", "submission")
+
+    # Detect report type
+    is_monthly = any(kw in q_lower for kw in ["monthly sub", "monthly int", "monthly submission", "monthly interview",
+                                                "monthly confirmation", "month sub & int", "monthly sub & int",
+                                                "monthly report"])
+    is_weekly = any(kw in q_lower for kw in ["last week sub", "last week int", "weekly sub", "weekly int",
+                                               "last week submission", "last week interview"])
+    is_bu_wise = any(kw in q_lower for kw in ["bu wise", "bu-wise", "bu report"])
+
+    if not (is_monthly or is_weekly or is_bu_wise):
+        return None
+
+    # Determine time range
+    if "last month" in q_lower:
+        time_val, time_label = "LAST_MONTH", "Last Month"
+    elif "this week" in q_lower:
+        time_val, time_label = "THIS_WEEK", "This Week"
+    elif "last week" in q_lower or is_weekly:
+        time_val, time_label = "LAST_WEEK", "Last Week"
+    elif "yesterday" in q_lower:
+        time_val, time_label = "YESTERDAY", "Yesterday"
+    elif "today" in q_lower:
+        time_val, time_label = "TODAY", "Today"
+    else:
+        time_val, time_label = "THIS_MONTH", "This Month"
+    time_start, time_end = _PG_TIME_RANGES[time_val]
+
+    # Run 3 aggregate queries in parallel-style
+    sub_sql = (
+        f'SELECT "BU_Name__c" AS "BU_Name", COUNT(*) AS sub_cnt '
+        f'FROM "Submissions__c" '
+        f'WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} '
+        f'AND "BU_Name__c" IS NOT NULL '
+        f'GROUP BY "BU_Name__c"'
+    )
+    int_sql = (
+        f'SELECT m."Name" AS "BU_Name", COUNT(*) AS int_cnt, '
+        f'SUM(CASE WHEN i."Final_Status__c" IN (\'Confirmation\', \'Expecting Confirmation\', \'Verbal Confirmation\') THEN 1 ELSE 0 END) AS conf_cnt, '
+        f'COALESCE(SUM(i."Amount__c"), 0) AS total_amount '
+        f'FROM "Interviews__c" i '
+        f'LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" '
+        f'LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+        f'WHERE i."Interview_Date1__c" >= {time_start} AND i."Interview_Date1__c" < {time_end} '
+        f'AND m."Name" IS NOT NULL '
+        f'GROUP BY m."Name"'
+    )
+    conf_sql = (
+        f'SELECT m."Name" AS "BU_Name", COUNT(*) AS vc_cnt '
+        f'FROM "Student__c" s '
+        f'LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+        f'WHERE s."Student_Marketing_Status__c" = \'Verbal Confirmation\' '
+        f'AND s."Verbal_Confirmation_Date__c" >= {time_start} AND s."Verbal_Confirmation_Date__c" < {time_end} '
+        f'AND m."Name" IS NOT NULL '
+        f'GROUP BY m."Name"'
+    )
+
+    sub_result = await execute_query(sub_sql)
+    int_result = await execute_query(int_sql)
+    conf_result = await execute_query(conf_sql)
+
+    if "error" in sub_result and "error" in int_result:
+        return None
+
+    # Build BU lookup maps
+    sub_map = {}
+    for r in sub_result.get("records", []):
+        r.pop("attributes", None)
+        sub_map[r["BU_Name"]] = r.get("sub_cnt", 0)
+
+    int_map = {}
+    for r in int_result.get("records", []):
+        r.pop("attributes", None)
+        int_map[r["BU_Name"]] = {
+            "interviews": r.get("int_cnt", 0),
+            "confirmations": r.get("conf_cnt", 0),
+            "amount": float(r.get("total_amount", 0) or 0),
+        }
+
+    conf_map = {}
+    for r in conf_result.get("records", []):
+        r.pop("attributes", None)
+        conf_map[r["BU_Name"]] = r.get("vc_cnt", 0)
+
+    # Merge all BU names
+    all_bus = sorted(set(list(sub_map.keys()) + list(int_map.keys()) + list(conf_map.keys())))
+
+    # Build summary table records
+    summary_records = []
+    total_s, total_i, total_c, total_a = 0, 0, 0, 0.0
+    for bu in all_bus:
+        subs = sub_map.get(bu, 0)
+        int_data = int_map.get(bu, {})
+        ints = int_data.get("interviews", 0)
+        confs = int_data.get("confirmations", 0) + conf_map.get(bu, 0)
+        amt = int_data.get("amount", 0.0)
+        total_s += subs
+        total_i += ints
+        total_c += confs
+        total_a += amt
+        summary_records.append({
+            "BU_Name": bu,
+            "Submissions": subs,
+            "Interviews": ints,
+            "Confirmations": confs,
+            "Interview_Amount": round(amt, 2),
+        })
+
+    # Sort by total activity descending
+    summary_records.sort(key=lambda x: x["Submissions"] + x["Interviews"], reverse=True)
+
+    # Build answer text server-side (no AI formatting needed)
+    answer_lines = [f"**{time_label} — Submissions, Interviews, Confirmations & Interview Amount BU wise**\n"]
+    answer_lines.append("| BU Name | Submissions | Interviews | Confirmations | Interview Amount |")
+    answer_lines.append("|---|---:|---:|---:|---:|")
+    for r in summary_records:
+        answer_lines.append(
+            f"| {r['BU_Name']} | {r['Submissions']:,} | {r['Interviews']:,} | {r['Confirmations']:,} | {r['Interview_Amount']:,.2f} |"
+        )
+    answer_lines.append(
+        f"| **Total** | **{total_s:,}** | **{total_i:,}** | **{total_c:,}** | **{total_a:,.2f}** |"
+    )
+    answer_lines.append(f"\n{len(all_bus)} BUs | {total_s:,} submissions | {total_i:,} interviews | {total_c:,} confirmations | ${total_a:,.2f} total interview amount")
+
+    answer_text = "\n".join(answer_lines)
+    queries_used = f"-- Submissions by BU\n{sub_sql}\n\n-- Interviews by BU\n{int_sql}\n\n-- Confirmations by BU\n{conf_sql}"
+
+    # Also fetch detail records for drill-down (paginated display)
+    detail_sql = (
+        f'SELECT "Student_Name__c", "BU_Name__c", "Client_Name__c", "Submission_Date__c" '
+        f'FROM "Submissions__c" '
+        f'WHERE "Submission_Date__c" >= {time_start} AND "Submission_Date__c" < {time_end} '
+        f'ORDER BY "BU_Name__c" LIMIT 2000'
+    )
+    detail_result = await execute_query(detail_sql)
+    detail_recs = detail_result.get("records", []) if "error" not in detail_result else []
+    for r in detail_recs:
+        r.pop("attributes", None)
+        r["_query_label"] = "Monthly Submissions"
+
+    data_payload = {
+        "totalSize": len(summary_records),
+        "records": summary_records + detail_recs[:200],
+        "query": queries_used,
+        "route": "SQL",
+        "rag_results": 0,
+    }
+
+    return {
+        "answer": answer_text,
+        "soql": queries_used,
+        "data": data_payload,
+        "summary_records": summary_records,
+    }
 
 def _match_report_pattern(question):
     """Match question to a known report pattern. Returns list of (query, label) or None."""
@@ -1014,6 +1174,114 @@ def _extract_object_fields_hint(soql, _schema_text=None):
     return "\n".join(lines) if lines else ""
 
 
+# ── Common AI mistakes → auto-fix rules ──────────────────────────
+_FIELD_FIXES = {
+    "Email__c": "Marketing_Email__c",
+    "email__c": "Marketing_Email__c",
+    "Interview_Date__c": "Interview_Date1__c",
+    "interview_date__c": "Interview_Date1__c",
+    "BU_Name": "BU_Name__c",
+    "Status__c": "Student_Marketing_Status__c",
+    "Marketing_Status__c": "Student_Marketing_Status__c",
+    "Visa_Status__c": "Marketing_Visa_Status__c",
+    "Days_In_Market__c": "Days_in_Market_Business__c",
+    "days_in_market": "Days_in_Market_Business__c",
+    "Last_Submission__c": "Last_Submission_Date__c",
+    "Submission_Date": "Submission_Date__c",
+    "Interview_Date": "Interview_Date1__c",
+    "Full_Name__c": "Student_Full_Name__c",
+    "Student_Name": "Student_Full_Name__c",
+}
+
+_INTERVIEW_BU_JOIN = (
+    ' LEFT JOIN "Student__c" _s ON "Interviews__c"."Student__c" = _s."Id"'
+    ' LEFT JOIN "Manager__c" _m ON _s."Manager__c" = _m."Id"'
+)
+
+
+def _auto_fix_sql(soql):
+    """Auto-fix common AI SQL mistakes before execution. Returns (fixed_sql, fixes_applied)."""
+    fixes = []
+    fixed = soql
+
+    # 1. Fix known wrong field names
+    for wrong, correct in _FIELD_FIXES.items():
+        if f'"{wrong}"' in fixed:
+            fixed = fixed.replace(f'"{wrong}"', f'"{correct}"')
+            fixes.append(f'{wrong} → {correct}')
+
+    # 2. Fix Interview BU queries: AI uses BU_Name__c on Interviews but it doesn't exist
+    all_tables = re.findall(r'(?:FROM|JOIN)\s+"?(\w+)"?', fixed, re.IGNORECASE)
+    if 'Interviews__c' in all_tables and 'Manager__c' not in all_tables:
+        if '"BU_Name__c"' in fixed or 'BU_Name' in fixed:
+            # Need to add JOIN through Student→Manager
+            from_m = re.search(r'(FROM\s+"Interviews__c"(?:\s+\w+)?)', fixed, re.IGNORECASE)
+            if from_m:
+                fixed = fixed.replace(from_m.group(1), from_m.group(1) + _INTERVIEW_BU_JOIN)
+                fixed = fixed.replace('"BU_Name__c"', '_m."Name"')
+                fixes.append('Added Student→Manager JOIN for BU name on Interviews')
+
+    # 3. Fix wrong date fields: CreatedDate instead of proper date fields
+    if 'Submissions__c' in all_tables and '"CreatedDate"' in fixed:
+        if 'Submission_Date__c' not in fixed:
+            fixed = fixed.replace('"CreatedDate"', '"Submission_Date__c"')
+            fixes.append('CreatedDate → Submission_Date__c for Submissions')
+
+    if 'Interviews__c' in all_tables and '"CreatedDate"' in fixed:
+        if 'Interview_Date1__c' not in fixed:
+            fixed = fixed.replace('"CreatedDate"', '"Interview_Date1__c"')
+            fixes.append('CreatedDate → Interview_Date1__c for Interviews')
+
+    # 4. Fix Onsite_Manager__c used as BU name (it's not the BU manager)
+    if '"Onsite_Manager__c"' in fixed and any(kw in soql.lower() for kw in ['bu', 'manager', 'group']):
+        if 'Manager__c' not in all_tables and 'Interviews__c' in all_tables:
+            from_m = re.search(r'(FROM\s+"Interviews__c"(?:\s+\w+)?)', fixed, re.IGNORECASE)
+            if from_m and _INTERVIEW_BU_JOIN not in fixed:
+                fixed = fixed.replace(from_m.group(1), from_m.group(1) + _INTERVIEW_BU_JOIN)
+            fixed = fixed.replace('"Onsite_Manager__c"', '_m."Name"')
+            fixes.append('Onsite_Manager__c → Manager JOIN for BU name')
+
+    # 5. Fix missing double-quotes on Salesforce table names
+    for tbl in ['Student__c', 'Submissions__c', 'Interviews__c', 'Manager__c', 'Job__c',
+                'Employee__c', 'Organization__c', 'Contact', 'Account']:
+        # Match unquoted table name after FROM/JOIN (not already quoted)
+        pattern = rf'(FROM|JOIN)\s+(?!")({re.escape(tbl)})(\s)'
+        if re.search(pattern, fixed, re.IGNORECASE):
+            fixed = re.sub(pattern, rf'\1 "{tbl}"\3', fixed, flags=re.IGNORECASE)
+            fixes.append(f'Added quotes to {tbl}')
+
+    # 6. Fix lowercase table names (stale copies)
+    stale_map = {
+        'students': '"Student__c"', 'submissions': '"Submissions__c"',
+        'interviews': '"Interviews__c"', 'managers': '"Manager__c"',
+        'jobs': '"Job__c"', 'employees': '"Employee__c"',
+    }
+    for stale, correct in stale_map.items():
+        pattern = rf'(FROM|JOIN)\s+{stale}(\s|$)'
+        if re.search(pattern, fixed, re.IGNORECASE):
+            fixed = re.sub(pattern, rf'\1 {correct}\2', fixed, flags=re.IGNORECASE)
+            fixes.append(f'{stale} → {correct}')
+
+    # 7. Fix picklist value typos
+    value_fixes = {
+        "'in market'": "'In Market'", "'IN MARKET'": "'In Market'",
+        "'pre marketing'": "'Pre Marketing'", "'PRE MARKETING'": "'Pre Marketing'",
+        "'verbal confirmation'": "'Verbal Confirmation'", "'VERBAL CONFIRMATION'": "'Verbal Confirmation'",
+        "'project started'": "'Project Started'", "'PROJECT STARTED'": "'Project Started'",
+        "'project completed'": "'Project Completed'", "'PROJECT COMPLETED'": "'Project Completed'",
+        "'exit'": "'Exit'", "'EXIT'": "'Exit'",
+        "'Bench'": "'In Market'", "'bench'": "'In Market'", "'on bench'": "'In Market'",
+    }
+    for wrong_val, correct_val in value_fixes.items():
+        if wrong_val in fixed:
+            fixed = fixed.replace(wrong_val, correct_val)
+            fixes.append(f'Value {wrong_val} → {correct_val}')
+
+    if fixes:
+        logger.info(f"Auto-fixed SQL: {', '.join(fixes)}")
+    return fixed, fixes
+
+
 def _validate_soql_fields(soql):
     """Check if the SQL query uses valid field/object names. Returns error string or None."""
     schema = get_schema()
@@ -1029,7 +1297,7 @@ def _validate_soql_fields(soql):
     if obj_name not in schema:
         return f"Object '{obj_name}' not found. Available: {', '.join(sorted(schema.keys())[:20])}"
 
-    valid_fields = {'count', 'id', 'cnt', 'total', 'total_amount'}
+    valid_fields = {'count', 'id', 'cnt', 'total', 'total_amount', 'range_label', 'avg_days', 'sub_cnt', 'int_cnt', 'conf_cnt'}
     for tbl in all_tables:
         if tbl in schema:
             valid_fields.update(f['name'].lower() for f in schema[tbl].get('fields', []))
@@ -1043,7 +1311,6 @@ def _validate_soql_fields(soql):
             part = part.strip()
             if not part or '(' in part:
                 continue
-            # Skip aliases (AS ...), relationship traversals, and table-prefixed fields
             if ' AS ' in part.upper():
                 part = part[:part.upper().index(' AS ')].strip()
             if '__r.' in part or '.' in part:
@@ -1220,7 +1487,12 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
     if q in ("NO_SOQL", "NO_SQL") or not q.upper().startswith("SELECT"):
         return None, None, None
 
-    logger.info(f"SQL: {q[:200]}")
+    logger.info(f"SQL (raw): {q[:200]}")
+
+    # Auto-fix common AI mistakes BEFORE validation
+    q, auto_fixes = _auto_fix_sql(q)
+    if auto_fixes:
+        logger.info(f"SQL (auto-fixed): {q[:200]}")
 
     # Pre-validate fields
     validation_error = _validate_soql_fields(q)
@@ -1247,6 +1519,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         if fix:
             fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
             if fix.upper().startswith("SELECT"):
+                fix, _ = _auto_fix_sql(fix)
                 logger.info(f"SQL retry 1: {fix[:200]}")
                 q = fix
                 result = await execute_query(q)
@@ -1259,6 +1532,7 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         if fix2:
             fix2 = fix2.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
             if fix2.upper().startswith("SELECT"):
+                fix2, _ = _auto_fix_sql(fix2)
                 logger.info(f"SQL retry 2 (different approach): {fix2[:200]}")
                 q = fix2
                 result = await execute_query(q)
@@ -1384,6 +1658,36 @@ async def answer_question(question, conversation_history=None, username=None, la
     schema_text = schema_to_prompt()
     if not schema_text or "No schema" in schema_text:
         return {"answer": "Schema not loaded. Run: python -m scripts.refresh_schema", "soql": None, "data": None}
+
+    # Fast path 1: Semantic layer (always runs — no AI, guaranteed correct)
+    semantic = await handle_semantic_query(question)
+    if semantic:
+        logger.info(f"Semantic handler matched: {question[:60]}")
+        await save_interaction(question, semantic["soql"], semantic["answer"], "SQL", username=username)
+        suggestions = await _generate_suggestions(question, semantic["answer"])
+        return {
+            "answer": semantic["answer"],
+            "soql": semantic["soql"],
+            "route": "SQL",
+            "rag_used": False,
+            "suggestions": suggestions,
+            "data": semantic["data"],
+        }
+
+    # Fast path 2: Direct report handler (BU-wise aggregate reports)
+    direct = await _handle_direct_report(question)
+    if direct:
+        logger.info(f"Direct report handler matched: {question[:60]}")
+        await save_interaction(question, direct["soql"], direct["answer"], "SQL", username=username)
+        suggestions = await _generate_suggestions(question, direct["answer"])
+        return {
+            "answer": direct["answer"],
+            "soql": direct["soql"],
+            "route": "SQL",
+            "rag_used": False,
+            "suggestions": suggestions,
+            "data": direct["data"],
+        }
 
     route = await _route(question)
     logger.info(f"Route: {route} | Q: {question[:60]}")
@@ -1628,6 +1932,50 @@ async def answer_question_stream(question, conversation_history=None, username=N
         return
 
     yield {"type": "thinking", "data": "Analyzing question"}
+
+    # Fast path 1: Semantic layer (always runs — no AI, guaranteed correct)
+    semantic = await handle_semantic_query(question)
+    if semantic:
+        logger.info(f"Semantic handler (stream): {question[:60]}")
+        yield {"type": "route", "data": "SQL"}
+        yield {"type": "thinking", "data": "Matched semantic pattern"}
+        yield {"type": "soql", "data": semantic["soql"]}
+        yield {"type": "data", "data": semantic["data"]}
+        yield {"type": "thinking_done", "data": None}
+        yield {"type": "token", "data": semantic["answer"]}
+        await save_interaction(question, semantic["soql"], semantic["answer"], "SQL", username=username)
+        suggestions = await _generate_suggestions(question, semantic["answer"])
+        yield {"type": "done", "data": {
+            "answer": semantic["answer"],
+            "soql": semantic["soql"],
+            "route": "SQL",
+            "rag_used": False,
+            "suggestions": suggestions,
+            "data": semantic["data"],
+        }}
+        return
+
+    # Fast path 2: Direct report handler (BU-wise aggregate reports)
+    direct = await _handle_direct_report(question)
+    if direct:
+            logger.info(f"Direct report handler (stream): {question[:60]}")
+            yield {"type": "route", "data": "SQL"}
+            yield {"type": "thinking", "data": "Building BU report from database"}
+            yield {"type": "soql", "data": direct["soql"]}
+            yield {"type": "data", "data": direct["data"]}
+            yield {"type": "thinking_done", "data": None}
+            yield {"type": "token", "data": direct["answer"]}
+            await save_interaction(question, direct["soql"], direct["answer"], "SQL", username=username)
+            suggestions = await _generate_suggestions(question, direct["answer"])
+            yield {"type": "done", "data": {
+                "answer": direct["answer"],
+                "soql": direct["soql"],
+                "route": "SQL",
+                "rag_used": False,
+                "suggestions": suggestions,
+                "data": direct["data"],
+            }}
+            return
 
     route = await _route(question)
     logger.info(f"Route (stream): {route} | Q: {question[:60]}")
