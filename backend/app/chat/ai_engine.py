@@ -26,19 +26,19 @@ def _sanitize_sql_input(value):
 
 # ── Layer 1: Synonym / Slang Expansion ─────────────────────────────
 _SYNONYM_MAP = {
-    # Status synonyms
-    "bench": "in market", "on bench": "in market", "benched": "in market",
-    "marketing": "in market", "on market": "in market",
-    "placed": "project started", "got placed": "project started",
-    "started project": "project started", "joined": "project started",
-    "confirmed": "verbal confirmation", "got confirmed": "verbal confirmation",
-    "verbal": "verbal confirmation", "vc": "verbal confirmation",
-    "exited": "exit", "left": "exit", "gone": "exit", "quit": "exit",
-    "training": "pre marketing", "premarketing": "pre marketing",
+    # Status synonyms (only multi-word or unambiguous single words)
+    "on bench": "in market", "benched": "in market",
+    "on market": "in market",
+    "got placed": "project started",
+    "started project": "project started",
+    "got confirmed": "verbal confirmation",
+    "vc": "verbal confirmation",
+    "exited": "exit", "quit": "exit",
+    "premarketing": "pre marketing",
     "pre-marketing": "pre marketing",
-    # Entity synonyms
-    "subs": "submissions", "sub": "submissions",
-    "ints": "interviews", "int": "interviews",
+    # Entity synonyms (only abbreviations that won't collide)
+    "subs": "submissions",
+    "ints": "interviews",
     "confs": "confirmations", "conf": "confirmations",
     "conformation": "confirmation", "conformations": "confirmations",
     "stds": "students", "std": "students",
@@ -46,28 +46,27 @@ _SYNONYM_MAP = {
     "ytd": "yesterday", "yday": "yesterday", "yest": "yesterday",
     "tmrw": "tomorrow", "2day": "today", "2morrow": "tomorrow",
     "lw": "last week", "tw": "this week", "lm": "last month", "tm": "this month",
-    # Tech synonyms
+    # Tech synonyms (only unambiguous)
     "dotnet": ".NET", "dot net": ".NET",
-    "sf": "salesforce", "sfdc": "SFDC",
+    "sfdc": "SFDC",
     "powerbi": "PowerBI", "power bi": "PowerBI",
     "devops": "DevOps", "dev ops": "DevOps",
     "servicenow": "Service Now", "service now": "Service Now",
-    "ds": "DS/AI", "data science": "DS/AI", "ai/ml": "DS/AI",
-    "ba": "Business Analyst", "business analyst": "Business Analyst",
-    "rpa": "RPA", "sap": "SAP BTP",
+    "data science": "DS/AI", "ai/ml": "DS/AI",
+    "business analyst": "Business Analyst",
+    "rpa": "RPA", "sap btp": "SAP BTP",
     # Visa synonyms
     "h1b": "H1", "h-1b": "H1", "h1 visa": "H1",
     "h4ead": "H4 EAD", "h4 ead": "H4 EAD",
     "opt visa": "OPT", "stem opt": "STEM",
     "green card": "GC", "gc ead": "GC",
-    "us citizen": "USC", "citizen": "USC",
+    "us citizen": "USC",
     # Action synonyms
     "gimme": "give me", "lemme": "let me", "wanna": "want to",
     "gonna": "going to", "gotta": "got to",
     "pls": "please", "plz": "please", "thx": "thanks",
     # BU / role synonyms
-    "bu": "business unit", "mgr": "manager", "mgrs": "managers",
-    "lead": "offshore manager", "leads": "offshore managers",
+    "mgr": "manager", "mgrs": "managers",
     # Common misspellings
     "submisions": "submissions", "submision": "submission",
     "interveiw": "interview", "interveiws": "interviews",
@@ -76,6 +75,17 @@ _SYNONYM_MAP = {
     "tecnology": "technology", "technolgy": "technology",
     "perfomance": "performance", "preformance": "performance",
 }
+# REMOVED (high collision risk):
+# "verbal" → corrupts "verbal interview"
+# "training" → corrupts "training session"
+# "joined" → corrupts "joined interview"
+# "left"/"gone" → corrupts "left join", "gone through"
+# "marketing" → corrupts "marketing email"
+# "lead"/"leads" → corrupts "lead time"
+# "sub"/"int" → corrupts "sub query", "interval"
+# "bench" → handled by _STATUS_MAP in semantic.py
+# "placed"/"confirmed" → handled by _STATUS_MAP in semantic.py
+# "ds"/"ba"/"sf"/"sap"/"bu"/"citizen" → too short, ambiguous
 
 _ABBREVIATION_PATTERNS = [
     (re.compile(r'\bhw\s+many\b', re.I), "how many"),
@@ -223,13 +233,15 @@ async def _fuzzy_cache_lookup(question):
         logger.warning(f"Fuzzy cache lookup failed: {str(e)[:80]}")
     return None, False
 
-# ── Dynamic Picklist Values (loaded from DB on first use) ─────────
+# ── Dynamic Picklist Values (loaded from DB, refreshed every 5 min) ─────────
 _picklist_cache = None
+_picklist_cache_ts = 0
+_PICKLIST_TTL = 300
 
 async def _load_picklist_values():
     """Load actual picklist values from PostgreSQL for accurate SQL generation."""
-    global _picklist_cache
-    if _picklist_cache is not None:
+    global _picklist_cache, _picklist_cache_ts
+    if _picklist_cache is not None and (time.time() - _picklist_cache_ts) < _PICKLIST_TTL:
         return _picklist_cache
 
     queries = {
@@ -253,6 +265,7 @@ async def _load_picklist_values():
         except Exception:
             pass
     _picklist_cache = result
+    _picklist_cache_ts = time.time()
     logger.info(f"Loaded picklist values: {', '.join(f'{k}({len(v)})' for k, v in result.items())}")
     return result
 
