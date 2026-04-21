@@ -114,6 +114,52 @@ def _normalize_question(question):
     return q
 
 
+# ── Layer 1b: Vague / Ambiguous Question Detection ──────────────────
+
+_VAGUE_PATTERNS = [
+    (re.compile(r'\b(?:good|best|top|worst|poor|strong|weak)\s+(?:performing|performer|student|bu|manager|team)', re.I),
+     "Could you clarify what metric you'd like? For example: most submissions, most interviews, most placements, highest confirmation rate?"),
+    (re.compile(r'\b(?:how is|how are|how\'s)\s+\w+\s+(?:doing|performing|going)\b', re.I),
+     "Could you specify what metric you'd like to see? For example: submission count, interview count, placement count, or confirmation rate?"),
+    (re.compile(r'\b(?:rank|ranking|compare|comparison)\b.*\b(?:bu|manager|team|student)\b', re.I),
+     "Could you specify what to rank by? For example: by submissions count, interview count, placements, or revenue?"),
+    (re.compile(r'\b(?:overall|general|complete)\s+(?:status|summary|overview|picture)\b', re.I),
+     "Could you specify what area? For example: students in market, submissions this week, interviews this month, or placements?"),
+]
+
+def _detect_vague_question(question):
+    q = question.lower()
+    if any(w in q for w in ["how many", "how much", "count", "total", "list", "show", "give me", "get me"]):
+        return None
+    for pattern, clarification in _VAGUE_PATTERNS:
+        if pattern.search(question):
+            return clarification
+    return None
+
+
+# ── Layer 1c: Unanswerable Question Detection ───────────────────────
+
+_UNANSWERABLE_PATTERNS = [
+    (re.compile(r'\b(?:why\s+(?:is|are|do|does|did|has|have|was|were))\b', re.I),
+     "I can show you the data, but I cannot determine reasons or causes from the database. Would you like to see the related numbers instead?"),
+    (re.compile(r'\b(?:should\s+(?:i|we)|what\s+should|recommend|suggest|advice)\b', re.I),
+     "I can show you the data to help you decide, but I can't make recommendations. What specific numbers would help?"),
+    (re.compile(r'\b(?:predict|forecast|will\s+(?:it|they|we|there)|going\s+to\s+(?:be|happen|increase|decrease))\b', re.I),
+     "I can show current and historical data, but I cannot predict future outcomes. Would you like to see the trend data instead?"),
+    (re.compile(r'\b(?:what\s+(?:if|would\s+happen))\b', re.I),
+     "I can only query existing data — I can't run hypothetical scenarios. Would you like to see the current numbers?"),
+]
+
+def _detect_unanswerable(question):
+    q = question.lower()
+    if any(w in q for w in ["how many", "how much", "count", "total", "list", "show", "give me", "get me"]):
+        return None
+    for pattern, response in _UNANSWERABLE_PATTERNS:
+        if pattern.search(question):
+            return response
+    return None
+
+
 # ── Layer 3: Fuzzy Cache Short-Circuit ─────────────────────────────
 
 async def _fuzzy_cache_lookup(question):
@@ -132,6 +178,10 @@ async def _fuzzy_cache_lookup(question):
             feedback = ex.get("feedback", "none")
 
             if not past_sql or not past_sql.strip().upper().startswith("SELECT"):
+                continue
+
+            if feedback == "bad":
+                logger.debug(f"Fuzzy cache SKIP (negative feedback): '{past_q[:60]}'")
                 continue
 
             ratio = SequenceMatcher(None, q_lower, past_q).ratio()
@@ -837,6 +887,11 @@ ANSWER_PROMPT = """You are a data analyst for a staffing/consulting company. Giv
 
 IRON RULES:
 - Use ONLY the data in QUERY RESULTS. NEVER fabricate or guess.
+- NEVER interpret or editorialize the data. Do NOT add opinions, insights, or subjective analysis.
+- NEVER use subjective words: "impressive", "concerning", "notable", "interesting", "surprisingly", "unfortunately", "good", "bad", "excellent", "poor", "alarming".
+- NEVER explain WHY numbers are high or low. Only state WHAT the numbers are.
+- NEVER predict future trends or suggest actions unless explicitly asked.
+- If the data cannot answer the question, say: "The data shows [what it shows], but I cannot determine [what was asked] from this."
 - Match your response length to the question complexity:
   * Simple count question ("how many X?") -> ONE sentence with the number. Nothing else.
   * Breakdown question ("BU wise", "tech wise") -> A summary table. No extra detail unless asked.
@@ -1904,8 +1959,23 @@ def _is_whatsapp_report(question):
 
 async def answer_question(question, conversation_history=None, username=None, last_soql=None):
     # Layer 1: Normalize question (expand synonyms, fix slang/typos)
+    start_time = time.time()
     original_question = question
     question = _normalize_question(question)
+
+    # Layer 1b: Detect vague/ambiguous questions → ask for clarification
+    vague_msg = _detect_vague_question(question)
+    if vague_msg:
+        logger.info(f"Vague question detected: {question[:60]}")
+        return {"answer": vague_msg, "soql": None, "data": None, "route": "CLARIFY",
+                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
+
+    # Layer 1c: Detect unanswerable questions → redirect to data
+    unanswerable_msg = _detect_unanswerable(question)
+    if unanswerable_msg:
+        logger.info(f"Unanswerable question detected: {question[:60]}")
+        return {"answer": unanswerable_msg, "soql": None, "data": None, "route": "CLARIFY",
+                "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}
 
     schema_text = schema_to_prompt()
     if not schema_text or "No schema" in schema_text:
@@ -1914,7 +1984,8 @@ async def answer_question(question, conversation_history=None, username=None, la
     # Fast path 1: Semantic layer (always runs — no AI, guaranteed correct)
     semantic = await handle_semantic_query(question)
     if semantic:
-        logger.info(f"Semantic handler matched: {question[:60]}")
+        elapsed = round(time.time() - start_time, 2)
+        logger.info(f"[ROUTE=SEMANTIC] Q='{question[:60]}' rows={len(semantic.get('data', {}).get('records', []))} time={elapsed}s")
         await save_interaction(question, semantic["soql"], semantic["answer"], "SQL", username=username)
         suggestions = await _generate_suggestions(question, semantic["answer"])
         return {
@@ -1929,7 +2000,8 @@ async def answer_question(question, conversation_history=None, username=None, la
     # Fast path 2: Direct report handler (BU-wise aggregate reports)
     direct = await _handle_direct_report(question)
     if direct:
-        logger.info(f"Direct report handler matched: {question[:60]}")
+        elapsed = round(time.time() - start_time, 2)
+        logger.info(f"[ROUTE=DIRECT_REPORT] Q='{question[:60]}' time={elapsed}s")
         await save_interaction(question, direct["soql"], direct["answer"], "SQL", username=username)
         suggestions = await _generate_suggestions(question, direct["answer"])
         return {
@@ -2133,6 +2205,30 @@ async def answer_question(question, conversation_history=None, username=None, la
         if data_summary:
             parts.append(data_summary)
 
+    # Change 4: Template answers for simple COUNT queries — skip AI entirely
+    q_lower = question.lower()
+    is_count_question = any(w in q_lower for w in ["how many", "how much", "total", "count of"])
+    if is_count_question and soql_recs and len(soql_recs) == 1:
+        rec = soql_recs[0]
+        count_val = rec.get("cnt") or rec.get("count") or rec.get("total")
+        if count_val is not None:
+            count_val = int(count_val)
+            entity = "records"
+            for word in ["student", "submission", "interview", "job", "employee", "manager", "placement"]:
+                if word in q_lower:
+                    entity = word + "s"
+                    break
+            template_answer = f"**{count_val:,} {entity}** match your query."
+            elapsed = round(time.time() - start_time, 2)
+            logger.info(f"[ROUTE=COUNT_TEMPLATE] Q='{question[:60]}' count={count_val} time={elapsed}s")
+            await save_interaction(question, soql_query, template_answer, route, username=username)
+            suggestions = await _generate_suggestions(question, template_answer)
+            return {
+                "answer": template_answer, "soql": soql_query, "route": route,
+                "rag_used": False, "suggestions": suggestions,
+                "data": {"totalSize": count_val, "records": soql_recs[:200], "query": soql_query, "route": route},
+            }
+
     # Detect if this is a WhatsApp-style report request
     use_whatsapp = _is_whatsapp_report(question)
     if use_whatsapp:
@@ -2153,6 +2249,8 @@ async def answer_question(question, conversation_history=None, username=None, la
     if answer and soql_recs is not None:
         answer = _verify_answer_counts(answer, soql_result, soql_recs, question)
 
+    elapsed = round(time.time() - start_time, 2)
+    logger.info(f"[ROUTE={route}] Q='{question[:60]}' rows={len(soql_recs) if soql_recs else 0} rag={bool(rag_results)} time={elapsed}s")
     await save_interaction(question, soql_query, answer or "", route, username=username)
     suggestions = await _generate_suggestions(question, answer or "")
 
@@ -2177,8 +2275,27 @@ async def answer_question_stream(question, conversation_history=None, username=N
     Async generator yielding structured events for Server-Sent Events.
     """
     # Layer 1: Normalize question
+    start_time = time.time()
     original_question = question
     question = _normalize_question(question)
+
+    # Layer 1b: Detect vague/ambiguous questions
+    vague_msg = _detect_vague_question(question)
+    if vague_msg:
+        logger.info(f"Vague question (stream): {question[:60]}")
+        yield {"type": "token", "data": vague_msg}
+        yield {"type": "done", "data": {"answer": vague_msg, "soql": None, "data": None, "route": "CLARIFY",
+               "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
+        return
+
+    # Layer 1c: Detect unanswerable questions
+    unanswerable_msg = _detect_unanswerable(question)
+    if unanswerable_msg:
+        logger.info(f"Unanswerable question (stream): {question[:60]}")
+        yield {"type": "token", "data": unanswerable_msg}
+        yield {"type": "done", "data": {"answer": unanswerable_msg, "soql": None, "data": None, "route": "CLARIFY",
+               "suggestions": ["How many students are in market?", "Show submissions this week BU wise", "List interviews this month"]}}
+        return
 
     schema_text = schema_to_prompt()
     if not schema_text or "No schema" in schema_text:
