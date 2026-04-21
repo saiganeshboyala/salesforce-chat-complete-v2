@@ -54,7 +54,7 @@ def _xlsx_bytes(rows: list[dict], columns: list[str], sheet_name: str = "Report"
 async def premarketing_bu() -> bytes:
     sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Batch__c" AS batch,
             s."Name" AS student_name
         FROM "Student__c" s
@@ -123,21 +123,20 @@ async def yesterday_submissions_bu() -> bytes:
 
     bu_summary_sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             COUNT(DISTINCT s."Id") FILTER (WHERE s."Student_Marketing_Status__c" = 'In Market') AS in_market,
             COUNT(sub."Id") AS sub_count
         FROM "Manager__c" m
         LEFT JOIN "Student__c" s ON s."Manager__c" = m."Id"
         LEFT JOIN "Submissions__c" sub ON sub."Student__c" = s."Id"
             AND sub."Submission_Date__c" = :yesterday
-        WHERE m."Type__c" IN ('Manager', 'Lead')
         GROUP BY m."Name"
         ORDER BY m."Name"
     """)
 
     detail_sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Offshore_Manager_Name__c" AS offshore_mgr,
             s."Name" AS student_name,
             s."Recruiter_Name__c" AS recruiter,
@@ -225,7 +224,7 @@ async def no_submissions_3days_bu() -> bytes:
 
     sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Offshore_Manager_Name__c" AS offshore_mgr,
             s."Recruiter_Name__c" AS recruiter,
             s."Name" AS student_name,
@@ -485,7 +484,7 @@ async def interview_mandatory_fields_bu() -> bytes:
     field_cols = ", ".join(f'i."{f[0]}"' for f in mandatory_fields)
     sql = text(f"""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Name" AS student_name,
             {field_cols},
             i."Id" AS interview_id
@@ -555,7 +554,7 @@ async def no_interviews_2weeks_bu() -> bytes:
 
     sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Offshore_Manager_Name__c" AS offshore_mgr,
             s."Recruiter_Name__c" AS recruiter,
             s."Name" AS student_name,
@@ -725,7 +724,7 @@ async def no_interviews_2weeks_offshore() -> bytes:
 async def last_week_performance_bu() -> bytes:
     sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Offshore_Manager_Name__c" AS offshore_mgr,
             s."Recruiter_Name__c" AS recruiter,
             s."Name" AS student_name,
@@ -898,7 +897,7 @@ async def last_week_performance_offshore() -> bytes:
 async def recruiter_performance_bu() -> bytes:
     sql = text("""
         SELECT
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Offshore_Manager_Name__c" AS offshore_mgr,
             s."Recruiter_Name__c" AS recruiter,
             s."Name" AS student_name,
@@ -974,7 +973,7 @@ async def recruiter_performance_offshore() -> bytes:
     sql = text("""
         SELECT
             s."Offshore_Manager_Name__c" AS offshore_mgr,
-            m."Name" AS bu_name,
+            COALESCE(m."Name", 'Unknown') AS bu_name,
             s."Recruiter_Name__c" AS recruiter,
             s."Name" AS student_name,
             COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
