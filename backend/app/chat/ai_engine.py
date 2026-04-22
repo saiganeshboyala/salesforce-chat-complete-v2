@@ -190,16 +190,27 @@ def _detect_unanswerable(question):
 # ── Layer 1d: Follow-up Resolution ────────────────────────────────
 
 _FOLLOWUP_PATTERNS = [
-    re.compile(r'^(?:and |but |also |what about |how about |now |ok |okay )', re.I),
-    re.compile(r'\b(?:same|that|those|these|them|their|they|it|its|his|her)\b', re.I),
+    re.compile(r'^(?:and |but |also |what about |how about |ok |okay )', re.I),
     re.compile(r'\b(?:instead|rather|compared|versus|vs)\b', re.I),
-    re.compile(r'\b(?:last (?:week|month|year|quarter)|this (?:week|month|year)|previous|next)\b', re.I),
     re.compile(r'\b(?:more details|break it down|drill down|expand|elaborate)\b', re.I),
 ]
 
+_STRONG_FOLLOWUP_PATTERNS = [
+    re.compile(r'^(?:same |same\b)', re.I),
+    re.compile(r'^(?:what about |how about )', re.I),
+    re.compile(r'^\b(?:and|but)\s+(?:what|how|show|list|for)\b', re.I),
+]
+
+_PRONOUN_FOLLOWUP = re.compile(r'\b(?:those|these|them|that one|the same)\b', re.I)
+
 _STANDALONE_INDICATORS = [
-    re.compile(r'\b(?:how many|how much|count|total|list|show me|give me|get me)\b.*\b(?:students?|submissions?|interviews?|managers?|bus?|employees?)\b', re.I),
-    re.compile(r'\b(?:who|which)\b.*\b(?:students?|bus?|managers?)\b', re.I),
+    re.compile(r'\b(?:how many|how much|count|total|list|show|give me|get me)\b', re.I),
+    re.compile(r'\b(?:who|which|find|search)\b', re.I),
+    re.compile(r'\b(?:details?|info)\s+(?:of|on|about|for)\b', re.I),
+    re.compile(r'\b(?:students?|submissions?|interviews?|managers?|employees?|recruiters?|bus?|jobs?|placements?)\b', re.I),
+    re.compile(r'\b(?:performance|report|expenses?|salary|payroll)\b', re.I),
+    re.compile(r'\b(?:yesterday|today|this week|this month|last week|last month)\b', re.I),
+    re.compile(r'(?:__c|BU-|BU\s)', re.I),
 ]
 
 
@@ -207,17 +218,28 @@ def _is_followup(question, conversation_history):
     if not conversation_history or len(conversation_history) < 2:
         return False
     q = question.strip()
-    for pat in _STANDALONE_INDICATORS:
-        if pat.search(q):
-            return False
-    if len(q.split()) <= 4:
-        has_entity = bool(re.search(r'\b(?:students?|submissions?|interviews?|managers?|employees?|bus?|jobs?)\b', q, re.I))
-        has_action = bool(re.search(r'\b(?:how many|count|total|list|show|give)\b', q, re.I))
-        if has_entity and has_action:
-            return False
+
+    # Check standalone indicators first — if ANY matches, it's standalone
+    standalone_score = sum(1 for pat in _STANDALONE_INDICATORS if pat.search(q))
+    if standalone_score >= 1:
+        return False
+
+    # Very short questions (1-2 words) with no entity are likely follow-ups
+    if len(q.split()) <= 2:
         return True
+
+    # Strong follow-up signals (sentence starts with "same", "what about", etc.)
+    for pat in _STRONG_FOLLOWUP_PATTERNS:
+        if pat.search(q):
+            return True
+
+    # Pronoun references to previous context
+    if _PRONOUN_FOLLOWUP.search(q):
+        return True
+
+    # General follow-up patterns need at least 2 matches to trigger
     followup_score = sum(1 for pat in _FOLLOWUP_PATTERNS if pat.search(q))
-    return followup_score >= 1
+    return followup_score >= 2
 
 
 FOLLOWUP_RESOLVE_PROMPT = """You resolve follow-up questions into standalone queries.
@@ -858,9 +880,11 @@ OBJECT RELATIONSHIPS (all interconnected):
 
 KEY RULES:
 - "details of [person name]" / "who is [name]" / "find [name]" -> Student__c FIRST (most people are students), also try Employee__c and Contact
+- "details on [BU name]" / "info on [BU]" -> Manager__c (Name, Active__c, Students_Count__c, In_Market_Students_Count__c, Total_Expenses__c, Verbal_Count__c, etc.)
 - "students under BU X" -> Student__c (use Manager__r.Name LIKE '%X%' for cross-object lookup)
 - "student status" / "in market" / "exit" -> Student__c
 - "submissions for BU X" -> Submissions__c (has BU_Name__c text field)
+- "recruiters" / "recruiter submissions" / "recruiter performance" -> Submissions__c (has Recruiter_Name__c text field)
 - "interviews" / "interview count" -> Interviews__c (add Student__c + Manager__c if BU-wise needed)
 - "employees" / "employee" -> Employee__c
 - "jobs" / "placements" / "W2" -> Job__c
@@ -905,6 +929,8 @@ USER TERM → CORRECT STATUS MAPPING:
   "pre marketing" / "premarketing" / "training" → 'Pre Marketing'
   "active" (for jobs) → WHERE "Active__c" = true
   "active" (for students) → 'In Market' (students in market are active)
+  "not in market" / "not on bench" → != 'In Market' (NEGATION — use != or NOT IN)
+  "not exit" → != 'Exit' (NEGATION)
 
 RULES:
 - ALWAYS double-quote table names: "Student__c", "Submissions__c", "Interviews__c", "Job__c", "Employee__c"
@@ -990,11 +1016,24 @@ A: SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt, SUM(i."Amount__c") AS total_am
 Q: "monthly confirmations BU wise"
 A: SELECT m."Name" AS "BU_Name", COUNT(*) AS cnt FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY m."Name" ORDER BY cnt DESC LIMIT 2000
 
+STATUS NEGATION ("not in market", "not exit", "not placed"):
+- "not in market" / "students who are not in market" → WHERE "Student_Marketing_Status__c" != 'In Market'
+- "not exit" → WHERE "Student_Marketing_Status__c" != 'Exit'
+- CAREFULLY read the user's intent: "not in market" means EXCLUDE 'In Market', "in market" means INCLUDE 'In Market'
+- For multiple exclusions: WHERE "Student_Marketing_Status__c" NOT IN ('Exit', 'Project Completed')
+
+RECRUITER QUERIES:
+- "recruiters" = Submissions__c."Recruiter_Name__c" (text field on Submissions__c)
+- "recruiters with zero/no submissions" = find recruiter names who did NOT submit in the period
+- "recruiter performance" = GROUP BY "Recruiter_Name__c" with COUNT
+- Do NOT treat "recruiters" as a person name or BU name — it refers to the role/field
+
 NEGATION QUERIES ("no", "zero", "without", "not having"):
 - "no interviews" / "zero interviews" / "without interviews" = students NOT IN the Interviews table for that period
 - ALWAYS use NOT IN subquery: WHERE "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE ...)
 - NEVER confuse "no interviews" with "interview count" — "no interviews" means ZERO interviews, not a summary of interviews
 - When combined with "BU wise": GROUP BY the BU manager name from the Manager__c JOIN
+- "recruiters with zero submissions" = recruiters NOT IN submissions for that period
 
 Q: "students with no interviews in 2 weeks"
 A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') LIMIT 2000
@@ -1005,8 +1044,20 @@ A: SELECT m."Name" AS "BU_Name", COUNT(*) AS student_count FROM "Student__c" s L
 Q: "no submissions this week by BU"
 A: SELECT "BU_Name__c", COUNT(*) AS student_count FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND s."Id" NOT IN (SELECT "Student__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('week', CURRENT_DATE)) GROUP BY "BU_Name__c" ORDER BY student_count DESC LIMIT 2000
 
+Q: "students who are not in market"
+A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" != 'In Market' ORDER BY "Student_Marketing_Status__c" LIMIT 2000
+
+Q: "list of all recruiters who did zero submissions last week"
+A: SELECT DISTINCT "Recruiter_Name__c" FROM "Submissions__c" WHERE "Recruiter_Name__c" IS NOT NULL AND "Recruiter_Name__c" NOT IN (SELECT DISTINCT "Recruiter_Name__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND "Submission_Date__c" < DATE_TRUNC('week', CURRENT_DATE) AND "Recruiter_Name__c" IS NOT NULL) LIMIT 2000
+
+Q: "recruiter wise submissions this month"
+A: SELECT "Recruiter_Name__c", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' AND "Recruiter_Name__c" IS NOT NULL GROUP BY "Recruiter_Name__c" ORDER BY cnt DESC LIMIT 2000
+
 Q: "details of Sai Ganesh Chinnamsetty"
 A: SELECT "Name", "Student_Marketing_Status__c", "Technology__c", "Phone__c", "Marketing_Email__c", "Personal_Email__c", "Marketing_Visa_Status__c", "Days_in_Market_Business__c", "Last_Submission_Date__c", "Verbal_Confirmation_Date__c", "Project_Start_Date__c" FROM "Student__c" WHERE "Name" ILIKE '%Chinnamsetty%' LIMIT 2000
+
+Q: "Details on NG-BU"
+A: SELECT "Name", "Active__c", "Students_Count__c", "In_Market_Students_Count__c", "Verbal_Count__c", "Total_Expenses__c", "Each_Placement_Cost__c" FROM "Manager__c" WHERE "Name" ILIKE '%NG%' LIMIT 10
 
 Q: "List all students under BU Divya Panguluri"
 A: SELECT s."Name", s."Student_Marketing_Status__c", s."Technology__c", s."Days_in_Market_Business__c" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE m."Name" ILIKE '%Divya Panguluri%' ORDER BY s."Name" LIMIT 2000
@@ -1620,7 +1671,26 @@ def _auto_fix_sql(soql):
             fixed = re.sub(pattern, rf'\1 {correct}\2', fixed, flags=re.IGNORECASE)
             fixes.append(f'{stale} → {correct}')
 
-    # 7. Fix picklist value typos
+    # 7. Fix technology value normalization (AI strips special chars)
+    tech_fixes = {
+        "'DSAI'": "'DS/AI'", "'dsai'": "'DS/AI'", "'Ds/Ai'": "'DS/AI'", "'ds/ai'": "'DS/AI'",
+        "'JAVA'": "'JAVA'", "'java'": "'JAVA'", "'Java'": "'JAVA'",
+        "'dotnet'": "'.NET'", "'DOTNET'": "'.NET'", "'DotNet'": "'.NET'", "'Dotnet'": "'.NET'",
+        "'dot net'": "'.NET'", "'DOT NET'": "'.NET'",
+        "'net'": "'.NET'", "'NET'": "'.NET'",
+        "'servicenow'": "'Service Now'", "'ServiceNow'": "'Service Now'", "'SERVICENOW'": "'Service Now'",
+        "'powerbi'": "'PowerBI'", "'POWERBI'": "'PowerBI'", "'Power BI'": "'PowerBI'",
+        "'rpa'": "'RPA'",
+        "'devops'": "'DevOps'", "'DEVOPS'": "'DevOps'",
+        "'sfdc'": "'SFDC'",
+    }
+    if '"Technology__c"' in fixed:
+        for wrong_tech, correct_tech in tech_fixes.items():
+            if wrong_tech in fixed:
+                fixed = fixed.replace(wrong_tech, correct_tech)
+                fixes.append(f'Tech value {wrong_tech} → {correct_tech}')
+
+    # 8. Fix picklist value typos
     value_fixes = {
         "'in market'": "'In Market'", "'IN MARKET'": "'In Market'",
         "'pre marketing'": "'Pre Marketing'", "'PRE MARKETING'": "'Pre Marketing'",
@@ -1978,6 +2048,60 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
     recs = result.get("records", [])
     for r in recs:
         r.pop("attributes", None)
+
+    # Retry 3: Empty result recovery — query succeeded but returned 0 rows
+    # Check if the question implies data should exist and try to fix filters
+    if not recs and "error" not in result and not last_soql:
+        expects_data = any(w in question.lower() for w in [
+            "list", "show", "get", "all", "details", "students under",
+            "performance of", "submissions for", "interviews for",
+        ])
+        if expects_data:
+            logger.info(f"Empty result recovery: trying to broaden query")
+            # Check for exact-match WHERE clauses that could use ILIKE instead
+            has_exact = re.search(r'"(\w+)"\s*=\s*\'([^\']+)\'', q)
+            picklist_fields = {'Student_Marketing_Status__c', 'Marketing_Visa_Status__c',
+                              'Final_Status__c', 'Submission_Status__c', 'Type__c'}
+            if has_exact and has_exact.group(1) not in picklist_fields:
+                broadened = re.sub(
+                    r'"(\w+)"\s*=\s*\'([^\']+)\'',
+                    lambda m: f'"{m.group(1)}" ILIKE \'%{m.group(2)}%\''
+                        if m.group(1) not in picklist_fields else m.group(0),
+                    q
+                )
+                if broadened != q:
+                    logger.info(f"Empty result recovery (ILIKE): {broadened[:200]}")
+                    result2 = await execute_query(broadened)
+                    if "error" not in result2 and result2.get("records"):
+                        q = broadened
+                        result = result2
+                        recs = result.get("records", [])
+                        for r in recs:
+                            r.pop("attributes", None)
+
+            # If still empty, ask AI to fix with context about expected data
+            if not recs:
+                obj_hint = _extract_object_fields_hint(q, schema_text)
+                fix = await _call_ai(SOQL_PROMPT,
+                    f"This query returned 0 rows but the user expects results:\n{q}\n\n"
+                    f"Question: {question}\n\n{obj_hint}\n\n{learning}\n\n"
+                    "The query likely has a filter that's too strict or uses wrong values. "
+                    "Common issues: wrong field name for filtering, exact match instead of ILIKE, "
+                    "wrong picklist value, missing JOIN. "
+                    "Write a corrected query that would return the expected data.",
+                    500, temperature=0)
+                if fix:
+                    fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
+                    if fix.upper().startswith("SELECT"):
+                        fix, _ = _auto_fix_sql(fix)
+                        logger.info(f"Empty result recovery (AI fix): {fix[:200]}")
+                        result3 = await execute_query(fix)
+                        if "error" not in result3 and result3.get("records"):
+                            q = fix
+                            result = result3
+                            recs = result.get("records", [])
+                            for r in recs:
+                                r.pop("attributes", None)
 
     # If LIMIT was hit, get true total count via COUNT(*) query
     total_size = result.get("totalSize", len(recs))
