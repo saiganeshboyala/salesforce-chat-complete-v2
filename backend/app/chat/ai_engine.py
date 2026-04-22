@@ -1895,6 +1895,113 @@ async def _execute_multi_query(query_pairs):
     return queries_str, combined_result, all_recs
 
 
+# ── Answer Validation ─────────────────────────────────────────
+
+_NEGATION_WORDS_Q = re.compile(r'\b(?:not|no|non|without|zero|never|exclude|except|other than|don.t|doesn.t|aren.t|isn.t|wasn.t|weren.t)\b', re.I)
+_NEGATION_SQL = re.compile(r'(?:!=|<>|\bNOT\s+IN\b|\bNOT\s+LIKE\b|\bNOT\s+ILIKE\b|\bIS\s+NOT\b|\bNOT\s+EXISTS\b)', re.I)
+
+_TIME_PATTERNS = {
+    "today": re.compile(r'\btoday\b', re.I),
+    "yesterday": re.compile(r'\byesterday\b', re.I),
+    "this week": re.compile(r'\bthis\s+week\b', re.I),
+    "last week": re.compile(r'\blast\s+week\b', re.I),
+    "this month": re.compile(r'\bthis\s+month\b', re.I),
+    "last month": re.compile(r'\blast\s+month\b', re.I),
+}
+
+_TIME_SQL = {
+    "today": re.compile(r'CURRENT_DATE(?!\s*-)', re.I),
+    "yesterday": re.compile(r"CURRENT_DATE\s*-\s*INTERVAL\s*'1\s*day'", re.I),
+    "this week": re.compile(r"DATE_TRUNC\s*\(\s*'week'", re.I),
+    "last week": re.compile(r"DATE_TRUNC\s*\(\s*'week'.*INTERVAL\s*'1\s*week'", re.I),
+    "this month": re.compile(r"DATE_TRUNC\s*\(\s*'month'", re.I),
+    "last month": re.compile(r"DATE_TRUNC\s*\(\s*'month'.*INTERVAL\s*'1\s*month'", re.I),
+}
+
+
+async def _validate_answer_logic(question, sql):
+    """
+    Check if the SQL logic matches the user's intent.
+    Returns a mismatch description string, or None if valid.
+    Fast rule-based checks first, then AI validation for complex cases.
+    """
+    q_lower = question.lower()
+    sql_upper = sql.upper()
+    issues = []
+
+    # 1. Negation mismatch: user says "not X" but SQL has "= X" without negation
+    q_has_negation = bool(_NEGATION_WORDS_Q.search(q_lower))
+    sql_has_negation = bool(_NEGATION_SQL.search(sql))
+    if q_has_negation and not sql_has_negation:
+        status_match = re.search(r'"Student_Marketing_Status__c"\s*=\s*\'([^\']+)\'', sql)
+        if status_match:
+            status_val = status_match.group(1)
+            neg_context = re.search(rf'\b(?:not|no|non|without|exclude|except)\b.*\b{re.escape(status_val.lower().split()[0])}\b', q_lower)
+            if neg_context:
+                issues.append(f"User asked for NOT '{status_val}' but SQL uses = '{status_val}' (missing negation)")
+
+    # 2. Wrong table: user asks about interviews but SQL queries submissions (or vice versa)
+    if "interview" in q_lower and '"Interviews__c"' not in sql and '"Submissions__c"' in sql:
+        if "submission" not in q_lower:
+            issues.append("User asked about interviews but SQL queries Submissions__c instead of Interviews__c")
+    if "submission" in q_lower and '"Submissions__c"' not in sql and '"Interviews__c"' in sql:
+        if "interview" not in q_lower:
+            issues.append("User asked about submissions but SQL queries Interviews__c instead of Submissions__c")
+
+    # 3. Time range mismatch: user says "last week" but SQL has "this month"
+    for time_label, q_pat in _TIME_PATTERNS.items():
+        if q_pat.search(q_lower):
+            sql_pat = _TIME_SQL.get(time_label)
+            if sql_pat and not sql_pat.search(sql):
+                other_times = [t for t, p in _TIME_SQL.items() if t != time_label and p.search(sql)]
+                if other_times:
+                    issues.append(f"User asked for '{time_label}' but SQL uses '{other_times[0]}' date range")
+            break
+
+    # 4. COUNT vs LIST mismatch: user asks "list/show" but SQL returns COUNT only
+    wants_list = bool(re.search(r'\b(?:list|show|give me|get me|details|which|who)\b', q_lower))
+    is_count_only = bool(re.match(r'\s*SELECT\s+COUNT\s*\(', sql, re.I)) and "GROUP BY" not in sql_upper
+    if wants_list and is_count_only:
+        issues.append("User wants to see records (list/show) but SQL only returns a COUNT")
+
+    # 5. User asks "how many/count" but SQL returns full records (less critical, skip)
+
+    # 6. GROUP BY mismatch: user asks "BU wise" but no GROUP BY
+    if re.search(r'\b(?:bu\s*wise|by\s+bu|tech\s*wise|by\s+technology|recruiter\s*wise|by\s+recruiter)\b', q_lower):
+        if "GROUP BY" not in sql_upper and "ORDER BY" not in sql_upper:
+            issues.append("User asks for a breakdown (wise/by) but SQL has no GROUP BY or ORDER BY")
+
+    if issues:
+        return "; ".join(issues)
+
+    # 7. AI validation for complex/ambiguous cases (only if no rule-based issues found)
+    # Skip AI validation for simple queries to save cost/time
+    is_complex = (
+        q_has_negation
+        or "compare" in q_lower
+        or "between" in q_lower
+        or re.search(r'\b(?:highest|lowest|top|bottom|best|worst|most|least)\b', q_lower)
+    )
+    if not is_complex:
+        return None
+
+    try:
+        verdict = await _call_ai(
+            "You verify if a SQL query correctly answers a user's question. "
+            "Check: negation logic, correct table, correct filters, correct date range, correct aggregation. "
+            "If the SQL correctly answers the question, respond with exactly: VALID\n"
+            "If there is a mismatch, respond with: MISMATCH: <one sentence explaining the issue>",
+            f"User question: {question}\nGenerated SQL: {sql}",
+            100, temperature=0)
+        if verdict and "MISMATCH" in verdict.upper():
+            mismatch_reason = verdict.split(":", 1)[-1].strip() if ":" in verdict else verdict
+            return mismatch_reason
+    except Exception as e:
+        logger.debug(f"AI validation skipped: {e}")
+
+    return None
+
+
 # ── SQL Path ────────────────────────────────────────────────────
 
 async def _soql_path(question, schema_text, history=None, last_soql=None):
@@ -2064,6 +2171,36 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
     recs = result.get("records", [])
     for r in recs:
         r.pop("attributes", None)
+
+    # Answer validation: check SQL logic matches the user's question
+    if recs and not last_soql:
+        mismatch = await _validate_answer_logic(question, q)
+        if mismatch:
+            logger.warning(f"Answer validation MISMATCH: {mismatch}")
+            obj_hint = _extract_object_fields_hint(q, schema_text)
+            fix = await _call_ai(SOQL_PROMPT,
+                f"ANSWER VALIDATION FAILED.\n"
+                f"User asked: {question}\n"
+                f"Generated SQL: {q}\n"
+                f"Problem: {mismatch}\n\n"
+                f"{obj_hint}\n\n{learning}\n\n"
+                f"Write a CORRECTED query that accurately answers the user's question. "
+                f"Pay close attention to: negation (NOT/!=), correct table, correct filters, "
+                f"correct GROUP BY, and correct date range.",
+                500, temperature=0)
+            if fix:
+                fix = fix.strip().replace("```soql", "").replace("```sql", "").replace("```", "").strip()
+                if fix.upper().startswith("SELECT"):
+                    fix, _ = _auto_fix_sql(fix)
+                    logger.info(f"SQL fixed (answer validation): {fix[:200]}")
+                    fix_result = await execute_query(fix)
+                    if "error" not in fix_result and fix_result.get("records"):
+                        q = fix
+                        result = fix_result
+                        recs = result.get("records", [])
+                        for r in recs:
+                            r.pop("attributes", None)
+                        logger.info(f"Answer validation fix succeeded: {len(recs)} records")
 
     # Retry 3: Empty result recovery — query succeeded but returned 0 rows
     # Check if the question implies data should exist and try to fix filters
