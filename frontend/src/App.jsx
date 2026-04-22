@@ -338,7 +338,7 @@ export default function App() {
     if (!input.trim()) return
     send(input, attachment?.id || null)
     setInput('')
-    // Keep the attachment pinned so follow-up questions reuse it; user removes manually.
+    if (inputRef.current) inputRef.current.style.height = 'auto'
     inputRef.current?.focus()
   }
 
@@ -734,7 +734,11 @@ export default function App() {
                   {I.paperclip}
                 </button>
                 <textarea ref={inputRef} className="input-field" value={input}
-                  onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
+                  onChange={e => {
+                    setInput(e.target.value)
+                    e.target.style.height = 'auto'
+                    e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px'
+                  }} onKeyDown={handleKey}
                   placeholder={attachment ? t('chat.placeholderFile', { file: attachment.filename }) : t('chat.placeholder')}
                   rows={1} disabled={loading} />
                 <button className="send-btn" onClick={handleSend} disabled={loading || !input.trim()}>
