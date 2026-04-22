@@ -342,7 +342,8 @@ def _detect_bu_name(q, question):
                   'scrum', 'master', 'sap', 'servicenow', 'tableau', 'power', 'bi',
                   'h1', 'h4', 'opt', 'cpt', 'gc', 'visa', 'ead', 'citizen', 'usc',
                   'placed', 'verbal', 'confirmation', 'pre', 'exit', 'market',
-                  'got', 'placement', 'placements', 'project', 'started', 'completed'}
+                  'got', 'placement', 'placements', 'project', 'started', 'completed',
+                  'recruiter', 'recruiters'}
     for pat in ci_patterns:
         m = re.search(pat, q)
         if m:
@@ -366,7 +367,8 @@ def _detect_bu_name(q, question):
                   'full', 'stack', 'science', 'sdet', 'ba', 'scrum', 'master',
                   'sap', 'servicenow', 'tableau', 'power', 'bi', 'placed',
                   'verbal', 'confirmation', 'pre', 'exit', 'started', 'completed',
-                  'got', 'placement', 'placements', 'project'}
+                  'got', 'placement', 'placements', 'project',
+                  'recruiter', 'recruiters'}
     # Multi-word BU: "aryan reddy students", "give me divya panguluri students"
     m = re.search(r'([a-z]+(?:\s+[a-z]+){1,3})\s+(?:subs|ints|students|team|performance|submissions|interviews)', q)
     if m:
@@ -949,6 +951,11 @@ async def handle_semantic_query(question):
           .replace("intrvw", "interview").replace("interivew", "interview")
           .replace("  ", " "))
 
+    # ── Skip recruiter-specific queries (let AI handle — needs Recruiter_Name__c logic) ──
+    if any(w in q for w in ["recruiter", "recruiters"]):
+        logger.info(f"Semantic SKIP: recruiter query, deferring to AI")
+        return None
+
     # ── Skip non-data questions (let AI handle explanatory/conceptual questions) ──
     if re.search(r'\b(?:what (?:is|are) the|explain|define|meaning of|difference between|how does|why do|tell me about the|what do you mean)\b', q):
         if not any(w in q for w in ["how many", "how much", "show", "list", "count",
@@ -1034,9 +1041,11 @@ async def handle_semantic_query(question):
         time_start, time_end, time_label = _detect_time(q)
         return await _handle_bu_full_report(q, bu_name, time_start, time_end, time_label)
 
-    # ── L8: No-activity queries (always about students, check before entity detection)
+    # ── L8: No-activity queries (about students, not recruiters/BUs)
+    # Skip if question is about recruiters — let AI handle those
+    is_recruiter_query = any(w in q for w in ["recruiter", "recruiters"])
     no_act_type, no_act_days = _detect_no_activity(q)
-    if no_act_type:
+    if no_act_type and not is_recruiter_query:
         bu_name = _sanitize(_detect_bu_name(q, question))
         top_n = _detect_top_n(q)
         if top_n:
@@ -1050,7 +1059,7 @@ async def handle_semantic_query(question):
     ent = ENTITIES[entity]
     negated_status, is_negated = _detect_negated_status(q)
     status = _detect_status(q)
-    tech = _sanitize(_detect_tech(q))
+    tech = _detect_tech(q)
     visa = _detect_visa(q)
     time_start, time_end, time_label = _detect_time(q)
     bu_name = _sanitize(_detect_bu_name(q, question))
@@ -1076,7 +1085,11 @@ async def handle_semantic_query(question):
     elif status and entity == "students":
         wheres.append(f'"Student_Marketing_Status__c" = \'{status}\'')
     if tech and entity == "students":
-        wheres.append(f'"Technology__c" ILIKE \'%{tech}%\'')
+        known_tech_values = {t[0] for t in _TECH_KEYWORDS}
+        if tech in known_tech_values:
+            wheres.append(f'"Technology__c" = \'{tech}\'')
+        else:
+            wheres.append(f'"Technology__c" ILIKE \'%{_sanitize(tech)}%\'')
     if visa and entity == "students":
         wheres.append(f'"Marketing_Visa_Status__c" = \'{visa}\'')
     if "active" in q and entity in ("jobs", "managers"):
