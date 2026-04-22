@@ -20,6 +20,7 @@ from app.config import settings
 from app.models.schemas import ChatRequest, ChatResponse
 from app.chat.engine import ChatEngine
 from app.chat.memory import update_feedback, get_stats as memory_stats, get_user_history, get_user_stats
+from app.chat.query_cache import update_feedback as cache_update_feedback, get_stats as cache_stats
 from app.chat.sessions import (
     list_sessions as list_user_sessions,
     load_session as load_user_session,
@@ -111,6 +112,11 @@ async def lifespan(app):
         import asyncio
         asyncio.create_task(run_sync())
         start_sync_scheduler()
+        # Initialize smart query cache and seed from past good queries
+        from app.chat.query_cache import init_cache as init_query_cache, seed_from_learning_memory
+        init_query_cache()
+        asyncio.create_task(seed_from_learning_memory())
+        logger.info("Smart query cache initialized")
     except Exception as e:
         logger.warning(f"PostgreSQL not available, using JSON files: {e}")
     yield
@@ -295,6 +301,7 @@ class FeedbackRequest(BaseModel):
 @app.post("/api/feedback")
 async def feedback(req: FeedbackRequest, request: Request, user=Depends(get_optional_user)):
     await update_feedback(req.question, req.feedback)
+    cache_update_feedback(req.question, req.feedback)
     await audit.log_action(
         (user or {}).get("username"),
         "feedback",
@@ -305,7 +312,9 @@ async def feedback(req: FeedbackRequest, request: Request, user=Depends(get_opti
 
 @app.get("/api/learning-stats")
 async def learning_stats():
-    return await memory_stats()
+    stats = await memory_stats()
+    stats["query_cache"] = cache_stats()
+    return stats
 
 
 # ── User History ───────────────────────────────────────

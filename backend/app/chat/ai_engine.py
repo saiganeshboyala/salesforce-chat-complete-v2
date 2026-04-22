@@ -13,6 +13,7 @@ from app.database.query import execute_query
 from app.chat.rag import search as rag_search, is_indexed
 from app.chat.memory import save_interaction, get_learning_examples_prompt, find_similar_past_queries
 from app.chat.semantic import handle_semantic_query
+from app.chat.query_cache import find_cached_query, cache_query, init_cache as init_query_cache
 
 logger = logging.getLogger(__name__)
 
@@ -1903,7 +1904,22 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         if cached:
             return cached
 
-    # Step 0a: Try fuzzy cache (reuse verified SQL from learning_memory)
+    # Step 0a: Smart query cache (embedding-based semantic match)
+    if not last_soql:
+        cached_sql, score, cached_q = find_cached_query(question)
+        if cached_sql:
+            cached_sql, _ = _auto_fix_sql(cached_sql)
+            result = await execute_query(cached_sql)
+            if "error" not in result and result.get("records"):
+                recs = result.get("records", [])
+                for r in recs:
+                    r.pop("attributes", None)
+                logger.info(f"Smart cache served {len(recs)} records (score={score:.3f}, from='{cached_q[:40]}')")
+                _cache_set(question, cached_sql, result, recs)
+                return cached_sql, result, recs
+            logger.info("Smart cache SQL failed, falling through to AI")
+
+    # Step 0a-fallback: Fuzzy word-overlap cache (backup if embedding cache misses)
     if not last_soql:
         cached_sql, found = await _fuzzy_cache_lookup(question)
         if found and cached_sql:
@@ -2135,6 +2151,10 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
 
     if recs and not last_soql:
         _cache_set(question, q, result, recs)
+        try:
+            cache_query(question, q)
+        except Exception as e:
+            logger.debug(f"Smart cache save skipped: {e}")
 
     return q, result, recs
 
