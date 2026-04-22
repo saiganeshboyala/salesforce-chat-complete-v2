@@ -1075,6 +1075,23 @@ A: SELECT m."Name" AS "BU_Name", s."Name" AS "Student_Name", i."Type__c", i."Fin
 Q: "monthly submissions interviews confirmations BU wise"
 A: SELECT "BU_Name__c", COUNT(*) AS cnt FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY "BU_Name__c" ORDER BY cnt DESC LIMIT 2000
 
+COMPLEX QUERIES (multiple conditions, subqueries, JOINs):
+
+Q: "students who had interviews last week but no submissions this week"
+A: SELECT "Name", "Technology__c", "Days_in_Market_Business__c" FROM "Student__c" WHERE "Student_Marketing_Status__c" = 'In Market' AND "Id" IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week' AND "Interview_Date1__c" < DATE_TRUNC('week', CURRENT_DATE)) AND "Id" NOT IN (SELECT "Student__c" FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('week', CURRENT_DATE)) LIMIT 2000
+
+Q: "in-market students under BU Divya with more than 90 days and no interviews in 2 weeks"
+A: SELECT s."Name", s."Technology__c", s."Days_in_Market_Business__c", m."Name" AS "BU_Name" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'In Market' AND m."Name" ILIKE '%Divya%' AND s."Days_in_Market_Business__c" > 90 AND s."Id" NOT IN (SELECT "Student__c" FROM "Interviews__c" WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days') ORDER BY s."Days_in_Market_Business__c" DESC LIMIT 2000
+
+Q: "BUs with submissions this month but zero interviews"
+A: SELECT DISTINCT sub."BU_Name__c" FROM "Submissions__c" sub WHERE sub."Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND sub."Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' AND sub."BU_Name__c" NOT IN (SELECT DISTINCT m."Name" FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= DATE_TRUNC('month', CURRENT_DATE) AND i."Interview_Date1__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month') LIMIT 2000
+
+Q: "top 5 BUs by submissions this month with their interview count"
+A: SELECT sub_data."BU_Name__c", sub_data.sub_count, COALESCE(int_data.int_count, 0) AS int_count FROM (SELECT "BU_Name__c", COUNT(*) AS sub_count FROM "Submissions__c" WHERE "Submission_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND "Submission_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY "BU_Name__c" ORDER BY sub_count DESC LIMIT 5) sub_data LEFT JOIN (SELECT m."Name" AS bu_name, COUNT(*) AS int_count FROM "Interviews__c" i LEFT JOIN "Student__c" s ON i."Student__c" = s."Id" LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE i."Interview_Date1__c" >= DATE_TRUNC('month', CURRENT_DATE) AND i."Interview_Date1__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' GROUP BY m."Name") int_data ON sub_data."BU_Name__c" = int_data.bu_name
+
+Q: "students with verbal confirmation this month and their BU"
+A: SELECT s."Name", s."Technology__c", s."Verbal_Confirmation_Date__c", m."Name" AS "BU_Name" FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" WHERE s."Student_Marketing_Status__c" = 'Verbal Confirmation' AND s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('month', CURRENT_DATE) AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' ORDER BY s."Verbal_Confirmation_Date__c" DESC LIMIT 2000
+
 FIELD NAME WARNINGS (common mistakes to avoid):
 - Student__c does NOT have "Email__c" — use "Marketing_Email__c" or "Personal_Email__c"
 - Interviews__c does NOT have "BU_Name__c" — JOIN through Student__c -> Manager__c
@@ -1895,6 +1912,103 @@ async def _execute_multi_query(query_pairs):
     return queries_str, combined_result, all_recs
 
 
+# ── Complex Query Planning ────────────────────────────────────
+
+_COMPLEX_INDICATORS = [
+    re.compile(r'\b(?:but|however|except|excluding)\b.*\b(?:and|with|who|that)\b', re.I),
+    re.compile(r'\b(?:who|that|which)\s+(?:have|has|had|did|do)\b.*\b(?:but|and)\b.*\b(?:no|not|without|zero)\b', re.I),
+    re.compile(r'\b(?:with|having)\b.*\b(?:but|and)\b.*\b(?:without|no|not|zero)\b', re.I),
+    re.compile(r'\b(?:compare|comparison|versus|vs)\b', re.I),
+    re.compile(r'\b(?:between|from)\b.*\b(?:and|to)\b.*\b(?:between|from)\b', re.I),
+]
+
+_MULTI_CONDITION = re.compile(
+    r'\b(?:and|but|who|that|with|under|where|having)\b',
+    re.I
+)
+
+QUERY_PLAN_PROMPT = """You are a SQL query planner. Given a complex question about a staffing database,
+break it down into a structured query plan.
+
+Return ONLY a JSON object (no markdown, no explanation):
+{
+  "primary_table": "Student__c",
+  "joins": ["Manager__c via Student__c.Manager__c"],
+  "filters": [
+    {"field": "Student_Marketing_Status__c", "op": "=", "value": "In Market"},
+    {"type": "subquery", "logic": "NOT IN", "table": "Submissions__c", "date_field": "Submission_Date__c", "date_range": "this week"}
+  ],
+  "output": "list of student names with technology and days in market",
+  "group_by": null,
+  "order_by": "Days_in_Market_Business__c DESC"
+}
+
+IMPORTANT TABLE RELATIONSHIPS:
+- Student__c.Manager__c -> Manager__c.Id (BU manager)
+- Submissions__c.Student__c -> Student__c.Id (has BU_Name__c text field)
+- Interviews__c.Student__c -> Student__c.Id (NO BU_Name__c — must JOIN through Student to Manager)
+- Job__c.Student__c -> Student__c.Id
+- Employee__c.Onshore_Manager__c -> Manager__c.Id
+
+STATUS VALUES: 'In Market', 'Exit', 'Pre Marketing', 'Project Started', 'Project Completed', 'Verbal Confirmation'
+NEGATION: "not in market" = != 'In Market', "no submissions" = NOT IN subquery, "without interviews" = NOT IN subquery
+RECRUITERS: Submissions__c."Recruiter_Name__c" (text field)
+BU: Manager__c."Name" or Submissions__c."BU_Name__c" (text field)"""
+
+
+def _is_complex_query(question):
+    """Detect if a question needs query planning."""
+    q = question.lower()
+    conditions = len(_MULTI_CONDITION.findall(q))
+    if conditions >= 3:
+        return True
+    for pat in _COMPLEX_INDICATORS:
+        if pat.search(q):
+            return True
+    return False
+
+
+async def _plan_complex_query(question, schema_text):
+    """Generate a query plan for complex questions, then use it to guide SQL generation."""
+    try:
+        plan_json = await _call_ai(QUERY_PLAN_PROMPT,
+            f"Schema context:\n{schema_text[:4000]}\n\nQuestion: {question}",
+            500, temperature=0)
+        if not plan_json:
+            return None
+        plan_json = plan_json.strip()
+        if plan_json.startswith("```"):
+            plan_json = plan_json.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        plan = json.loads(plan_json)
+        logger.info(f"Query plan: table={plan.get('primary_table')}, filters={len(plan.get('filters', []))}")
+        return plan
+    except (json.JSONDecodeError, Exception) as e:
+        logger.debug(f"Query planning failed: {e}")
+        return None
+
+
+def _plan_to_hint(plan):
+    """Convert query plan to a hint string for the SQL generator."""
+    if not plan:
+        return ""
+    parts = ["\nQUERY PLAN (follow this structure):"]
+    parts.append(f"  Primary table: {plan.get('primary_table', '?')}")
+    if plan.get("joins"):
+        parts.append(f"  JOINs needed: {', '.join(plan['joins'])}")
+    for i, f in enumerate(plan.get("filters", []), 1):
+        if f.get("type") == "subquery":
+            parts.append(f"  Filter {i}: {f.get('logic', 'NOT IN')} subquery on {f.get('table')} "
+                        f"(date: {f.get('date_field')} {f.get('date_range', '')})")
+        else:
+            parts.append(f"  Filter {i}: {f.get('field')} {f.get('op', '=')} '{f.get('value')}'")
+    if plan.get("group_by"):
+        parts.append(f"  GROUP BY: {plan['group_by']}")
+    if plan.get("order_by"):
+        parts.append(f"  ORDER BY: {plan['order_by']}")
+    parts.append(f"  Output: {plan.get('output', 'records')}")
+    return "\n".join(parts)
+
+
 # ── Answer Validation ─────────────────────────────────────────
 
 _NEGATION_WORDS_Q = re.compile(r'\b(?:not|no|non|without|zero|never|exclude|except|other than|don.t|doesn.t|aren.t|isn.t|wasn.t|weren.t)\b', re.I)
@@ -2080,6 +2194,16 @@ async def _soql_path(question, schema_text, history=None, last_soql=None):
         prompt = f"TARGET OBJECTS (query these):\n{focused}\n\nFULL SCHEMA CONTEXT:\n{schema_text}\n{picklist_prompt}\n{learning}\nQuestion: {question}"
     else:
         prompt = f"Schema:\n{schema_text}\n{picklist_prompt}\n{learning}\nQuestion: {question}"
+
+    # For complex queries, generate a plan first to guide SQL generation
+    plan_hint = ""
+    if not last_soql and _is_complex_query(question):
+        logger.info(f"Complex query detected, planning: {question[:60]}")
+        plan = await _plan_complex_query(question, schema_text)
+        plan_hint = _plan_to_hint(plan)
+
+    if plan_hint:
+        prompt = f"{prompt}\n{plan_hint}"
 
     if history:
         conv_ctx = _build_conversation_context(history)
