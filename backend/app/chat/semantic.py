@@ -156,7 +156,7 @@ _STATUS_MAP = {
     "pre marketing": "Pre Marketing", "premarketing": "Pre Marketing",
     "pre-marketing": "Pre Marketing", "not ready": "Pre Marketing",
     "pre market": "Pre Marketing", "training": "Pre Marketing",
-    "in training": "Pre Marketing", "not in market": "Pre Marketing",
+    "in training": "Pre Marketing",
     "exit": "Exit", "exited": "Exit", "left": "Exit", "pulled out": "Exit",
     "dropped": "Exit", "quit": "Exit", "terminated": "Exit",
     "removed": "Exit", "left the program": "Exit",
@@ -260,11 +260,27 @@ def _detect_entity(q):
                 return entity
     return None
 
+_NEGATION_BEFORE = re.compile(r'\b(?:not|no|non|without|exclude|except|other than)\s+', re.I)
+
 def _detect_status(q):
     for kw, val in _STATUS_MAP.items():
         if kw in q:
+            idx = q.index(kw)
+            before = q[max(0, idx - 15):idx]
+            if _NEGATION_BEFORE.search(before):
+                continue
             return val
     return None
+
+def _detect_negated_status(q):
+    """Detect if user wants NOT a specific status. Returns (status_value, True) or (None, False)."""
+    for kw, val in _STATUS_MAP.items():
+        if kw in q:
+            idx = q.index(kw)
+            before = q[max(0, idx - 15):idx]
+            if _NEGATION_BEFORE.search(before):
+                return val, True
+    return None, False
 
 _SHORT_TECH_KEYWORDS = {"de ", "ba ", "cs "}
 
@@ -1032,6 +1048,7 @@ async def handle_semantic_query(question):
         return None
 
     ent = ENTITIES[entity]
+    negated_status, is_negated = _detect_negated_status(q)
     status = _detect_status(q)
     tech = _sanitize(_detect_tech(q))
     visa = _detect_visa(q)
@@ -1054,7 +1071,9 @@ async def handle_semantic_query(question):
     wheres = []
     needs_bu_join = False
 
-    if status and entity == "students":
+    if is_negated and negated_status and entity == "students":
+        wheres.append(f'"Student_Marketing_Status__c" != \'{negated_status}\'')
+    elif status and entity == "students":
         wheres.append(f'"Student_Marketing_Status__c" = \'{status}\'')
     if tech and entity == "students":
         wheres.append(f'"Technology__c" ILIKE \'%{tech}%\'')
