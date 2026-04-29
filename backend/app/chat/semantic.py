@@ -150,8 +150,8 @@ _STATUS_MAP = {
     "confirmed": "Verbal Confirmation", "confirmation": "Verbal Confirmation",
     "got confirmed": "Verbal Confirmation", "who got confirmed": "Verbal Confirmation",
     "vc ": "Verbal Confirmation", "verbals": "Verbal Confirmation",
-    "got placed": "Verbal Confirmation", "placed": "Verbal Confirmation",
-    "placements": "Verbal Confirmation", "placement": "Verbal Confirmation",
+    "got placed": "Project Started", "placed": "Project Started",
+    "placements": "Project Started", "placement": "Project Started",
     "got offer": "Verbal Confirmation", "received offer": "Verbal Confirmation",
     "pre marketing": "Pre Marketing", "premarketing": "Pre Marketing",
     "pre-marketing": "Pre Marketing", "not ready": "Pre Marketing",
@@ -582,9 +582,9 @@ def _detect_message_context(q):
                                "200 days", "300 days", "more than", "days in market"]):
         context["audience"] = "long_market_students"
         context["reason"] = "extended time in market"
-    elif any(w in q for w in ["confirmation", "verbal", "placed", "placement", "got offer"]):
+    elif any(w in q for w in ["confirmation", "verbal", "placed", "placement", "got offer", "project started"]):
         context["audience"] = "placed_students"
-        context["reason"] = "verbal confirmation / placement"
+        context["reason"] = "placement / project start"
     elif any(w in q for w in ["new student", "new batch", "new joinee", "onboarding",
                                "welcome", "orientation"]):
         context["audience"] = "new_students"
@@ -827,10 +827,10 @@ async def _handle_message_generation(q, question):
                     f'ORDER BY s."Days_in_Market_Business__c" DESC NULLS LAST LIMIT 2000')
     elif audience == "placed_students":
         data_sql = ('SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", '
-                    's."Verbal_Confirmation_Date__c" '
+                    's."Marketing_Start_Date__c" '
                     'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
-                    'WHERE s."Student_Marketing_Status__c" = \'Verbal Confirmation\' '
-                    'ORDER BY s."Verbal_Confirmation_Date__c" DESC NULLS LAST LIMIT 200')
+                    'WHERE s."Student_Marketing_Status__c" = \'Project Started\' '
+                    'ORDER BY s."Marketing_Start_Date__c" DESC NULLS LAST LIMIT 200')
     elif audience == "new_students":
         data_sql = ('SELECT s."Name", m."Name" AS "BU_Name", s."Technology__c", s."Batch__c", s."CreatedDate" '
                     'FROM "Student__c" s LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
@@ -860,7 +860,7 @@ async def _handle_message_generation(q, question):
         "idle_students": f"students with no submissions in the last {days} days",
         "no_interview_students": f"students with no interviews in the last {days} days",
         "long_market_students": f"students who have been in market for {days}+ days",
-        "placed_students": "students who recently got placed (verbal confirmation)",
+        "placed_students": "students who recently got placed (project started)",
         "new_students": "newly joined students (last 7 days)",
         "low_performers": f"students with lowest submission activity in the last {days} days",
         "all_students": "all in-market students (weekly update)",

@@ -271,7 +271,7 @@ async def find_similar_past_queries(question, top_k=5):
         result = await session.execute(text("""
             SELECT question, sql_query, feedback FROM learning_memory
             WHERE sql_query IS NOT NULL AND sql_query != ''
-            AND (feedback IS NULL OR feedback != 'bad')
+            AND feedback IN ('good', 'corrected')
             ORDER BY created_at DESC LIMIT 500
         """))
         rows = result.fetchall()

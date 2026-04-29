@@ -146,6 +146,8 @@ async def yesterday_submissions_bu() -> bytes:
         JOIN "Student__c" s ON sub."Student__c" = s."Id"
         LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
         WHERE sub."Submission_Date__c" = :yesterday
+          AND sub."Id" IS NOT NULL
+          AND s."Last_Submission_Date__c" IS NOT NULL
         ORDER BY m."Name", s."Offshore_Manager_Name__c", s."Name"
     """)
 
@@ -179,6 +181,18 @@ async def yesterday_submissions_bu() -> bytes:
                 "last_sub": lsd,
             })
 
+    def _perf_line(target_pct):
+        if target_pct >= 100:
+            return "\n\U0001f44d Excellent execution. Keep up the momentum."
+        if target_pct >= 70:
+            return "\n\U0001f44d Good progress. Push for higher submissions."
+        if target_pct >= 40:
+            return "\n\U0001f449 Performance is below expectations. Strengthen daily submission activity."
+        return (
+            "\n\U0001f449 Performance is significantly below expectations. "
+            "Immediate focus is required on increasing submissions and maintaining daily activity."
+        )
+
     output_rows = []
     for bu in sorted(set(list(bu_summary.keys()) + list(bu_details.keys()))):
         s = bu_summary.get(bu, {"in_market": 0, "sub_count": 0, "target": 0.0})
@@ -197,22 +211,14 @@ async def yesterday_submissions_bu() -> bytes:
                     f"\U0001f464 *{st['student']}* | \U0001f465 Recruiter: {st['recruiter']} "
                     f"| \U0001f4c5 Last Submission: {st['last_sub']}"
                 )
+            lines.append(_perf_line(s['target']))
 
-        if s['target'] >= 100:
-            lines.append("\n\U0001f44d Excellent execution. Keep up the momentum.")
-        elif s['target'] >= 70:
-            lines.append("\n\U0001f44d Good progress. Push for higher submissions.")
-        elif s['target'] >= 40:
-            lines.append("\n\U0001f449 Performance is below expectations. Strengthen daily submission activity.")
-        else:
-            lines.append(
-                "\n\U0001f449 Performance is significantly below expectations. "
-                "Immediate focus is required on increasing submissions and maintaining daily activity."
-            )
+        if not details:
+            lines.append(_perf_line(s['target']))
 
-        output_rows.append({"BU Name": bu, "Message": "\n".join(lines)})
+        output_rows.append({"BU": bu, "Message": "\n".join(lines)})
 
-    return _xlsx_bytes(output_rows, ["BU Name", "Message"], "Yesterday Submissions BU")
+    return _xlsx_bytes(output_rows, ["BU", "Message"], "Yesterday Submissions BU")
 
 
 # ────────────────────────────────────────────────────────────

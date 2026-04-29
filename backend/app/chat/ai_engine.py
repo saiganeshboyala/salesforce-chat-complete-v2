@@ -2510,6 +2510,106 @@ def _verify_answer_counts(answer, soql_result, soql_recs, question):
     return answer
 
 
+def _extract_count_value(soql_recs):
+    if not soql_recs or len(soql_recs) != 1:
+        return None
+    for key in ("cnt", "count", "total"):
+        value = soql_recs[0].get(key)
+        if isinstance(value, (int, float)) and value is not None:
+            return int(value)
+    for key, value in soql_recs[0].items():
+        if key == "attributes":
+            continue
+        if isinstance(value, (int, float)) and value is not None:
+            return int(value)
+    return None
+
+
+def _detect_primary_entity(question):
+    q_lower = question.lower()
+    entity_map = [
+        ("students", ["student", "students", "candidate", "candidates", "consultant", "consultants"]),
+        ("submissions", ["submission", "submissions", "resume sent", "resumes sent", "profiles sent"]),
+        ("interviews", ["interview", "interviews"]),
+        ("jobs", ["job", "jobs", "requirements", "positions"]),
+        ("employees", ["employee", "employees", "staff"]),
+        ("managers", ["manager", "managers", "bu", "business unit"]),
+        ("placements", ["placement", "placements", "placed", "project started"]),
+        ("records", []),
+    ]
+    for label, tokens in entity_map:
+        if any(token in q_lower for token in tokens):
+            return label
+    return "records"
+
+
+def _build_count_answer(question, count_val):
+    q_lower = question.lower()
+    entity = _detect_primary_entity(question)
+    qualifiers = []
+
+    status_phrases = [
+        "in market", "pre marketing", "verbal confirmation", "project started",
+        "project completed", "exit", "active",
+    ]
+    for phrase in status_phrases:
+        if phrase in q_lower:
+            qualifiers.append(phrase)
+            break
+
+    time_phrases = [
+        "today", "yesterday", "this week", "last week", "this month",
+        "last month", "this year", "last year",
+    ]
+    for phrase in time_phrases:
+        if phrase in q_lower:
+            qualifiers.append(phrase)
+            break
+
+    dyn = re.search(r'\b(last|past)\s+\d+\s+(days?|weeks?|months?)\b', q_lower)
+    if dyn:
+        qualifiers.append(dyn.group(0))
+
+    if qualifiers:
+        return f"**{count_val:,} {entity}** match your query for {' '.join(qualifiers)}."
+    return f"**{count_val:,} {entity}** match your query."
+
+
+def _build_group_template_answer(question, soql_recs):
+    if not soql_recs or len(soql_recs) <= 1:
+        return None
+    if not all("cnt" in r for r in soql_recs):
+        return None
+
+    group_key = next((k for k in soql_recs[0] if k != "cnt"), None)
+    if not group_key:
+        return None
+
+    total = sum(r.get("cnt", 0) for r in soql_recs)
+    entity = _detect_primary_entity(question)
+    lines = [f"**{total:,} {entity}** across **{len(soql_recs)} groups**.\n"]
+    lines.append(f"| {group_key} | Count |")
+    lines.append("|---|---:|")
+    for r in soql_recs:
+        lines.append(f"| {r.get(group_key, 'N/A')} | {r.get('cnt', 0):,} |")
+    lines.append(f"| **Total** | **{total:,}** |")
+    return "\n".join(lines)
+
+
+def _is_group_question(question):
+    q_lower = question.lower()
+    return any(w in q_lower for w in [
+        "bu wise", "by bu", "tech wise", "by technology",
+        "visa wise", "by visa", "status wise", "by status",
+        "manager wise", "by manager",
+    ])
+
+
+def _is_count_question(question):
+    q_lower = question.lower()
+    return any(w in q_lower for w in ["how many", "how much", "total", "count of", "number of"])
+
+
 def _build_conversation_context(conversation_history):
     if not conversation_history:
         return ""
@@ -2911,22 +3011,10 @@ async def answer_question(question, conversation_history=None, username=None, la
         if data_summary:
             parts.append(data_summary)
 
-    # Change 4: Template answers for simple COUNT/GROUP queries — skip AI entirely
-    q_lower = question.lower()
-    is_group_question = any(w in q_lower for w in ["bu wise", "by bu", "tech wise", "by technology",
-                                                     "visa wise", "by visa", "status wise", "by status",
-                                                     "manager wise", "by manager"])
-    if is_group_question and soql_recs and len(soql_recs) > 1 and all("cnt" in r for r in soql_recs):
-        group_key = next((k for k in soql_recs[0] if k != "cnt"), None)
-        if group_key:
+    if _is_group_question(question):
+        template_answer = _build_group_template_answer(question, soql_recs)
+        if template_answer:
             total = sum(r.get("cnt", 0) for r in soql_recs)
-            lines = [f"**{total:,} total** across **{len(soql_recs)} groups**\n"]
-            lines.append(f"| {group_key} | Count |")
-            lines.append("|---|---:|")
-            for r in soql_recs:
-                lines.append(f"| {r.get(group_key, 'N/A')} | {r.get('cnt', 0):,} |")
-            lines.append(f"| **Total** | **{total:,}** |")
-            template_answer = "\n".join(lines)
             elapsed = round(time.time() - start_time, 2)
             logger.info(f"[ROUTE=GROUP_TEMPLATE] Q='{question[:60]}' groups={len(soql_recs)} total={total} time={elapsed}s")
             await save_interaction(question, soql_query, template_answer, route, username=username)
@@ -2937,18 +3025,10 @@ async def answer_question(question, conversation_history=None, username=None, la
                 "data": {"totalSize": total, "records": soql_recs[:200], "query": soql_query, "route": route},
             }
 
-    is_count_question = any(w in q_lower for w in ["how many", "how much", "total", "count of"])
-    if is_count_question and soql_recs and len(soql_recs) == 1:
-        rec = soql_recs[0]
-        count_val = rec.get("cnt") or rec.get("count") or rec.get("total")
+    if _is_count_question(question):
+        count_val = _extract_count_value(soql_recs)
         if count_val is not None:
-            count_val = int(count_val)
-            entity = "records"
-            for word in ["student", "submission", "interview", "job", "employee", "manager", "placement"]:
-                if word in q_lower:
-                    entity = word + "s"
-                    break
-            template_answer = f"**{count_val:,} {entity}** match your query."
+            template_answer = _build_count_answer(question, count_val)
             elapsed = round(time.time() - start_time, 2)
             logger.info(f"[ROUTE=COUNT_TEMPLATE] Q='{question[:60]}' count={count_val} time={elapsed}s")
             await save_interaction(question, soql_query, template_answer, route, username=username)
@@ -3362,6 +3442,45 @@ async def answer_question_stream(question, conversation_history=None, username=N
         data_summary = await _build_data_summary(soql_recs, true_total=tt, soql_query=soql_query)
         if data_summary:
             parts.append(data_summary)
+
+    if _is_group_question(question):
+        template_answer = _build_group_template_answer(question, soql_recs)
+        if template_answer:
+            yield {"type": "thinking", "data": "Formatting grouped results"}
+            yield {"type": "thinking_done", "data": None}
+            yield {"type": "token", "data": template_answer}
+            await save_interaction(question, soql_query, template_answer, route, username=username)
+            suggestions = await _generate_suggestions(question, template_answer)
+            if suggestions:
+                yield {"type": "suggestions", "data": suggestions}
+            yield {"type": "done", "data": {
+                "answer": template_answer,
+                "soql": soql_query,
+                "route": route,
+                "data": data_payload,
+                "suggestions": suggestions,
+            }}
+            return
+
+    if _is_count_question(question):
+        count_val = _extract_count_value(soql_recs)
+        if count_val is not None:
+            template_answer = _build_count_answer(question, count_val)
+            yield {"type": "thinking", "data": "Formatting count answer"}
+            yield {"type": "thinking_done", "data": None}
+            yield {"type": "token", "data": template_answer}
+            await save_interaction(question, soql_query, template_answer, route, username=username)
+            suggestions = await _generate_suggestions(question, template_answer)
+            if suggestions:
+                yield {"type": "suggestions", "data": suggestions}
+            yield {"type": "done", "data": {
+                "answer": template_answer,
+                "soql": soql_query,
+                "route": route,
+                "data": data_payload,
+                "suggestions": suggestions,
+            }}
+            return
 
     # Detect if this is a WhatsApp-style report request
     use_whatsapp = _is_whatsapp_report(question)

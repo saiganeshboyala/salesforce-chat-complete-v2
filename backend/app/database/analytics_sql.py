@@ -348,4 +348,512 @@ async def compute_analytics():
         "data": expense_data,
     })
 
+    # ── 11. Submission-to-Interview Conversion by BU ──────────────
+    sub_int_conv = await _query(
+        'SELECT m."Name" AS bu, '
+        'COUNT(DISTINCT sub."Id") AS total_subs, '
+        'COUNT(DISTINCT i."Id") AS total_ints, '
+        'ROUND(CASE WHEN COUNT(DISTINCT sub."Id") > 0 '
+        '  THEN COUNT(DISTINCT i."Id")::numeric / COUNT(DISTINCT sub."Id") * 100 ELSE 0 END, 1) AS conv_rate '
+        'FROM "Student__c" s '
+        'JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+        'LEFT JOIN "Submissions__c" sub ON sub."Student__c" = s."Id" '
+        '  AND sub."Submission_Date__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'LEFT JOIN "Interviews__c" i ON i."Student__c" = s."Id" '
+        '  AND i."Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+        'GROUP BY m."Name" HAVING COUNT(DISTINCT sub."Id") > 0 '
+        'ORDER BY conv_rate DESC'
+    )
+    avg_conv = 0
+    if sub_int_conv:
+        total_s_all = sum(r["total_subs"] for r in sub_int_conv)
+        total_i_all = sum(r["total_ints"] for r in sub_int_conv)
+        avg_conv = round(total_i_all / total_s_all * 100, 1) if total_s_all else 0
+    conv_data = []
+    for r in sub_int_conv:
+        rate = float(r["conv_rate"] or 0)
+        if rate >= avg_conv * 1.3:
+            verdict = "Above Average"
+        elif rate >= avg_conv * 0.7:
+            verdict = "Average"
+        else:
+            verdict = "Below Average"
+        conv_data.append({
+            "name": r["bu"],
+            "submissions": r["total_subs"],
+            "interviews": r["total_ints"],
+            "conversionRate": rate,
+            "verdict": verdict,
+            "drilldown": f"List all submissions and interviews for BU {r['bu']} in the last 90 days",
+        })
+    cards.append({
+        "id": "sub_to_interview_conversion",
+        "title": "Submission → Interview Conversion (Last 90 Days)",
+        "description": f"Avg {avg_conv}% conversion across {len(conv_data)} BUs — are submissions turning into interviews?",
+        "chartType": "table",
+        "data": conv_data,
+        "metric": {"label": "Avg Conversion", "value": f"{avg_conv}%"},
+    })
+
+    # ── 12. Interview-to-Placement Conversion by BU ──────────────
+    int_place_conv = await _query(
+        'SELECT m."Name" AS bu, '
+        'COUNT(DISTINCT i."Id") AS total_ints, '
+        'COUNT(DISTINCT i."Id") FILTER (WHERE i."Final_Status__c" IN '
+        '  (\'Confirmation\', \'Expecting Confirmation\', \'Verbal Confirmation\')) AS confirmations, '
+        'COUNT(DISTINCT s."Id") FILTER (WHERE s."Student_Marketing_Status__c" IN '
+        '  (\'Project Started\', \'Project Completed\', \'Verbal Confirmation\')) AS placements, '
+        'ROUND(CASE WHEN COUNT(DISTINCT i."Id") > 0 '
+        '  THEN COUNT(DISTINCT i."Id") FILTER (WHERE i."Final_Status__c" IN '
+        '    (\'Confirmation\', \'Expecting Confirmation\', \'Verbal Confirmation\'))::numeric '
+        '    / COUNT(DISTINCT i."Id") * 100 ELSE 0 END, 1) AS conf_rate '
+        'FROM "Student__c" s '
+        'JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+        'LEFT JOIN "Interviews__c" i ON i."Student__c" = s."Id" '
+        '  AND i."Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'180 days\' '
+        'WHERE s."Student_Marketing_Status__c" IN (\'In Market\', \'Verbal Confirmation\', \'Project Started\') '
+        'GROUP BY m."Name" HAVING COUNT(DISTINCT i."Id") > 0 '
+        'ORDER BY conf_rate DESC'
+    )
+    total_i_all2 = sum(r["total_ints"] for r in int_place_conv) if int_place_conv else 0
+    total_c_all = sum(r["confirmations"] for r in int_place_conv) if int_place_conv else 0
+    avg_conf = round(total_c_all / total_i_all2 * 100, 1) if total_i_all2 else 0
+    int_place_data = []
+    for r in int_place_conv:
+        rate = float(r["conf_rate"] or 0)
+        if rate >= 20:
+            verdict = "Strong"
+        elif rate >= 10:
+            verdict = "Average"
+        elif rate > 0:
+            verdict = "Weak"
+        else:
+            verdict = "No Conversions"
+        int_place_data.append({
+            "name": r["bu"],
+            "interviews": r["total_ints"],
+            "confirmations": r["confirmations"],
+            "placements": r["placements"],
+            "confirmationRate": rate,
+            "verdict": verdict,
+            "drilldown": f"List all interviews and placements for BU {r['bu']} in the last 6 months",
+        })
+    cards.append({
+        "id": "interview_to_placement",
+        "title": "Interview → Placement Conversion (Last 6 Months)",
+        "description": f"Avg {avg_conf}% confirmation rate — which BUs close deals best?",
+        "chartType": "table",
+        "data": int_place_data,
+        "metric": {"label": "Avg Confirmation Rate", "value": f"{avg_conf}%"},
+    })
+
+    # ── 13. Recruiter Effectiveness ──────────────────────────────
+    recruiter_eff = await _query(
+        'SELECT s."Recruiter_Name__c" AS recruiter, '
+        'COUNT(DISTINCT s."Id") AS students, '
+        'COUNT(DISTINCT sub."Id") AS subs, '
+        'COUNT(DISTINCT i."Id") AS ints, '
+        'COUNT(DISTINCT s."Id") FILTER (WHERE s."Student_Marketing_Status__c" IN '
+        '  (\'Verbal Confirmation\', \'Project Started\')) AS placed, '
+        'ROUND(CASE WHEN COUNT(DISTINCT sub."Id") > 0 '
+        '  THEN COUNT(DISTINCT i."Id")::numeric / COUNT(DISTINCT sub."Id") * 100 ELSE 0 END, 1) AS sub_to_int, '
+        'ROUND(CASE WHEN COUNT(DISTINCT i."Id") > 0 '
+        '  THEN COUNT(DISTINCT s."Id") FILTER (WHERE s."Student_Marketing_Status__c" IN '
+        '    (\'Verbal Confirmation\', \'Project Started\'))::numeric / COUNT(DISTINCT i."Id") * 100 '
+        '  ELSE 0 END, 1) AS int_to_place '
+        'FROM "Student__c" s '
+        'LEFT JOIN "Submissions__c" sub ON sub."Student__c" = s."Id" '
+        '  AND sub."Submission_Date__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'LEFT JOIN "Interviews__c" i ON i."Student__c" = s."Id" '
+        '  AND i."Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'WHERE s."Recruiter_Name__c" IS NOT NULL '
+        '  AND s."Student_Marketing_Status__c" IN (\'In Market\', \'Verbal Confirmation\', \'Project Started\') '
+        'GROUP BY s."Recruiter_Name__c" HAVING COUNT(DISTINCT sub."Id") >= 5 '
+        'ORDER BY sub_to_int DESC'
+    )
+    rec_data = []
+    for r in recruiter_eff:
+        s2i = float(r["sub_to_int"] or 0)
+        i2p = float(r["int_to_place"] or 0)
+        if s2i >= 15 and i2p >= 10:
+            grade = "A — High Performer"
+        elif s2i >= 10 or i2p >= 8:
+            grade = "B — Good"
+        elif s2i >= 5:
+            grade = "C — Average"
+        else:
+            grade = "D — Needs Improvement"
+        rec_data.append({
+            "name": r["recruiter"],
+            "students": r["students"],
+            "submissions": r["subs"],
+            "interviews": r["ints"],
+            "placed": r["placed"],
+            "subToIntRate": s2i,
+            "intToPlaceRate": i2p,
+            "grade": grade,
+            "drilldown": f"Show all students under recruiter {r['recruiter']}",
+        })
+    cards.append({
+        "id": "recruiter_effectiveness",
+        "title": "Recruiter Effectiveness (Last 90 Days)",
+        "description": f"{len(rec_data)} recruiters ranked by submission→interview and interview→placement conversion",
+        "chartType": "table",
+        "data": rec_data[:30],
+    })
+
+    # ── 14. Technology Market Demand — which techs convert best ──
+    tech_conv = await _query(
+        'SELECT s."Technology__c" AS tech, '
+        'COUNT(DISTINCT s."Id") AS in_market, '
+        'COUNT(DISTINCT sub."Id") AS subs, '
+        'COUNT(DISTINCT i."Id") AS ints, '
+        'COUNT(DISTINCT s."Id") FILTER (WHERE s."Student_Marketing_Status__c" IN '
+        '  (\'Verbal Confirmation\', \'Project Started\')) AS placed, '
+        'ROUND(AVG(s."Days_in_Market_Business__c"), 0) AS avg_days '
+        'FROM "Student__c" s '
+        'LEFT JOIN "Submissions__c" sub ON sub."Student__c" = s."Id" '
+        '  AND sub."Submission_Date__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'LEFT JOIN "Interviews__c" i ON i."Student__c" = s."Id" '
+        '  AND i."Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'WHERE s."Technology__c" IS NOT NULL '
+        '  AND s."Student_Marketing_Status__c" IN (\'In Market\', \'Verbal Confirmation\', \'Project Started\') '
+        'GROUP BY s."Technology__c" HAVING COUNT(DISTINCT s."Id") >= 3 '
+        'ORDER BY COUNT(DISTINCT i."Id")::numeric / NULLIF(COUNT(DISTINCT sub."Id"), 0) DESC NULLS LAST'
+    )
+    tech_demand_data = []
+    for r in tech_conv:
+        subs = r["subs"] or 0
+        ints = r["ints"] or 0
+        placed = r["placed"] or 0
+        s2i = round(ints / subs * 100, 1) if subs > 0 else 0
+        if s2i >= 15 and placed > 0:
+            demand = "Hot"
+        elif s2i >= 8:
+            demand = "Warm"
+        elif subs > 0:
+            demand = "Cold"
+        else:
+            demand = "No Data"
+        tech_demand_data.append({
+            "name": r["tech"],
+            "inMarket": r["in_market"],
+            "submissions": subs,
+            "interviews": ints,
+            "placed": placed,
+            "conversionRate": s2i,
+            "avgDaysInMarket": int(r["avg_days"] or 0),
+            "demand": demand,
+            "drilldown": f"List all students with technology {r['tech']}",
+        })
+    hot_count = sum(1 for d in tech_demand_data if d["demand"] == "Hot")
+    cards.append({
+        "id": "tech_demand",
+        "title": "Technology Demand Analysis (Last 90 Days)",
+        "description": f"{hot_count} hot technologies out of {len(tech_demand_data)} — which skills convert best?",
+        "chartType": "table",
+        "data": tech_demand_data[:25],
+    })
+
+    # ── 15. Student Placement Probability ─────────────────────────
+    student_prob = await _query(
+        'SELECT s."Name" AS student, m."Name" AS bu, s."Technology__c" AS tech, '
+        's."Days_in_Market_Business__c" AS dim, '
+        'COALESCE(s."Submission_Count__c", 0) AS total_subs, '
+        'COALESCE(s."Interviews_Count__c", 0) AS total_ints, '
+        's."Last_Submission_Date__c" AS last_sub, '
+        's."Recent_Past_Interview_Date__c" AS last_int, '
+        's."Recruiter_Name__c" AS recruiter '
+        'FROM "Student__c" s '
+        'LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id" '
+        'WHERE s."Student_Marketing_Status__c" = \'In Market\' '
+        'ORDER BY s."Days_in_Market_Business__c" ASC NULLS LAST '
+        'LIMIT 2000'
+    )
+    prob_data = []
+    today = datetime.now().date()
+    for r in student_prob:
+        dim = int(r["dim"] or 0)
+        total_subs = int(r["total_subs"] or 0)
+        total_ints = int(r["total_ints"] or 0)
+        last_sub = r.get("last_sub")
+        last_int = r.get("last_int")
+
+        score = 50
+        if dim <= 30:
+            score += 15
+        elif dim <= 60:
+            score += 10
+        elif dim <= 90:
+            score += 5
+        elif dim > 180:
+            score -= 15
+        else:
+            score -= 5
+
+        if total_subs >= 30:
+            score += 10
+        elif total_subs >= 15:
+            score += 5
+        elif total_subs < 5:
+            score -= 10
+
+        if total_ints >= 5:
+            score += 15
+        elif total_ints >= 3:
+            score += 10
+        elif total_ints >= 1:
+            score += 5
+        else:
+            score -= 10
+
+        if last_sub:
+            days_since_sub = (today - last_sub).days if hasattr(last_sub, 'days') else (today - last_sub).days
+            if days_since_sub <= 3:
+                score += 10
+            elif days_since_sub <= 7:
+                score += 5
+            elif days_since_sub > 14:
+                score -= 10
+
+        if last_int:
+            days_since_int = (today - last_int).days if hasattr(last_int, 'days') else (today - last_int).days
+            if days_since_int <= 7:
+                score += 10
+            elif days_since_int <= 14:
+                score += 5
+
+        score = max(5, min(95, score))
+
+        if score >= 70:
+            outlook = "High"
+        elif score >= 50:
+            outlook = "Medium"
+        elif score >= 30:
+            outlook = "Low"
+        else:
+            outlook = "At Risk"
+
+        prob_data.append({
+            "name": r["student"],
+            "bu": r["bu"] or "N/A",
+            "technology": r["tech"] or "N/A",
+            "daysInMarket": dim,
+            "submissions": total_subs,
+            "interviews": total_ints,
+            "score": score,
+            "outlook": outlook,
+            "drilldown": f"Show full details for student {r['student']}",
+        })
+
+    prob_data.sort(key=lambda x: -x["score"])
+    high_prob = sum(1 for d in prob_data if d["outlook"] == "High")
+    at_risk_prob = sum(1 for d in prob_data if d["outlook"] == "At Risk")
+    cards.append({
+        "id": "placement_probability",
+        "title": "Student Placement Probability Score",
+        "description": f"{high_prob} high-probability, {at_risk_prob} at-risk out of {len(prob_data)} in-market students",
+        "chartType": "table",
+        "data": prob_data[:50],
+    })
+
+    # ── 16. Time-to-Placement by Technology ──────────────────────
+    ttp_data = await _query(
+        'SELECT s."Technology__c" AS tech, '
+        'COUNT(*) AS placed, '
+        'ROUND(AVG(s."Days_in_Market_Business__c"), 0) AS avg_days, '
+        'ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s."Days_in_Market_Business__c"), 0) AS median_days, '
+        'MIN(s."Days_in_Market_Business__c") AS min_days, '
+        'MAX(s."Days_in_Market_Business__c") AS max_days '
+        'FROM "Student__c" s '
+        'WHERE s."Student_Marketing_Status__c" IN (\'Verbal Confirmation\', \'Project Started\') '
+        '  AND s."Technology__c" IS NOT NULL '
+        '  AND s."Days_in_Market_Business__c" IS NOT NULL '
+        'GROUP BY s."Technology__c" HAVING COUNT(*) >= 2 '
+        'ORDER BY avg_days ASC'
+    )
+    ttp_chart = []
+    for r in ttp_data:
+        avg_d = int(r["avg_days"] or 0)
+        median_d = int(r["median_days"] or 0)
+        if avg_d <= 45:
+            speed = "Fast"
+        elif avg_d <= 90:
+            speed = "Average"
+        else:
+            speed = "Slow"
+        ttp_chart.append({
+            "name": r["tech"],
+            "placed": r["placed"],
+            "avgDays": avg_d,
+            "medianDays": median_d,
+            "minDays": int(r["min_days"] or 0),
+            "maxDays": int(r["max_days"] or 0),
+            "speed": speed,
+            "drilldown": f"List all placed students with technology {r['tech']}",
+        })
+    overall_avg = round(sum(d["avgDays"] * d["placed"] for d in ttp_chart) / max(sum(d["placed"] for d in ttp_chart), 1))
+    cards.append({
+        "id": "time_to_placement",
+        "title": "Time-to-Placement by Technology",
+        "description": f"Overall avg {overall_avg} days — which technologies place fastest?",
+        "chartType": "table",
+        "data": ttp_chart[:20],
+        "metric": {"label": "Avg Days to Place", "value": str(overall_avg)},
+    })
+
+    # ── 17. Submission Velocity (Weekly Trend, last 8 weeks) ─────
+    sub_velocity = await _query(
+        'SELECT DATE_TRUNC(\'week\', "Submission_Date__c")::date AS week, '
+        'COUNT(*) AS subs '
+        'FROM "Submissions__c" '
+        'WHERE "Submission_Date__c" >= CURRENT_DATE - INTERVAL \'8 weeks\' '
+        'GROUP BY DATE_TRUNC(\'week\', "Submission_Date__c") '
+        'ORDER BY week'
+    )
+    vel_data = []
+    prev_subs = None
+    for r in sub_velocity:
+        wk = r["week"]
+        subs = r["subs"]
+        label = wk.strftime("%b %d") if hasattr(wk, "strftime") else str(wk)[:10]
+        change = None
+        change_pct = None
+        if prev_subs is not None and prev_subs > 0:
+            change = subs - prev_subs
+            change_pct = round(change / prev_subs * 100, 1)
+        vel_data.append({
+            "month": label,
+            "submissions": subs,
+            "drilldown": f"List all submissions for week of {label}",
+        })
+        prev_subs = subs
+
+    if len(vel_data) >= 2:
+        first_half = sum(d["submissions"] for d in vel_data[:len(vel_data)//2])
+        second_half = sum(d["submissions"] for d in vel_data[len(vel_data)//2:])
+        if first_half > 0:
+            trend_pct = round((second_half - first_half) / first_half * 100, 1)
+            trend_dir = "accelerating" if trend_pct > 5 else ("decelerating" if trend_pct < -5 else "stable")
+        else:
+            trend_pct = 0
+            trend_dir = "no baseline"
+    else:
+        trend_pct = 0
+        trend_dir = "insufficient data"
+
+    cards.append({
+        "id": "submission_velocity",
+        "title": "Weekly Submission Velocity (Last 8 Weeks)",
+        "description": f"Submission pace is {trend_dir} ({'+' if trend_pct > 0 else ''}{trend_pct}% second half vs first half)",
+        "chartType": "line",
+        "data": vel_data,
+        "metric": {"label": "Trend", "value": f"{'+' if trend_pct > 0 else ''}{trend_pct}%"},
+    })
+
+    # ── 18. BU Health Scorecard ──────────────────────────────────
+    bu_health_raw = await _query(
+        'SELECT m."Name" AS bu, '
+        'm."In_Market_Students_Count__c" AS in_market, '
+        'COALESCE(m."Verbal_Count__c", 0) AS verbals, '
+        'COUNT(DISTINCT sub."Id") AS subs_90d, '
+        'COUNT(DISTINCT i."Id") AS ints_90d, '
+        'COUNT(DISTINCT sub."Id") FILTER (WHERE sub."Submission_Date__c" >= CURRENT_DATE - INTERVAL \'7 days\') AS subs_7d, '
+        'ROUND(AVG(s."Days_in_Market_Business__c"), 0) AS avg_dim '
+        'FROM "Manager__c" m '
+        'LEFT JOIN "Student__c" s ON s."Manager__c" = m."Id" '
+        '  AND s."Student_Marketing_Status__c" = \'In Market\' '
+        'LEFT JOIN "Submissions__c" sub ON sub."Student__c" = s."Id" '
+        '  AND sub."Submission_Date__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'LEFT JOIN "Interviews__c" i ON i."Student__c" = s."Id" '
+        '  AND i."Interview_Date1__c" >= CURRENT_DATE - INTERVAL \'90 days\' '
+        'WHERE m."Active__c" = true '
+        'GROUP BY m."Name", m."In_Market_Students_Count__c", m."Verbal_Count__c" '
+        'ORDER BY m."Name"'
+    )
+    health_data = []
+    for r in bu_health_raw:
+        im = int(r["in_market"] or 0)
+        if im == 0:
+            continue
+        subs_90 = r["subs_90d"] or 0
+        ints_90 = r["ints_90d"] or 0
+        subs_7 = r["subs_7d"] or 0
+        verbals = int(r["verbals"] or 0)
+        avg_dim = int(r["avg_dim"] or 0)
+
+        score = 50
+        sub_rate = subs_90 / (im * 90) if im > 0 else 0
+        if sub_rate >= 0.5:
+            score += 15
+        elif sub_rate >= 0.3:
+            score += 10
+        elif sub_rate >= 0.15:
+            score += 5
+        else:
+            score -= 10
+
+        int_rate = ints_90 / im if im > 0 else 0
+        if int_rate >= 1.0:
+            score += 15
+        elif int_rate >= 0.5:
+            score += 10
+        elif int_rate >= 0.2:
+            score += 5
+        else:
+            score -= 10
+
+        if verbals >= 3:
+            score += 10
+        elif verbals >= 1:
+            score += 5
+        else:
+            score -= 5
+
+        weekly_target = im * 2 * 5
+        weekly_pct = round(subs_7 / weekly_target * 100, 1) if weekly_target > 0 else 0
+        if weekly_pct >= 80:
+            score += 10
+        elif weekly_pct >= 50:
+            score += 5
+        else:
+            score -= 5
+
+        score = max(0, min(100, score))
+        if score >= 75:
+            grade = "A — Excellent"
+        elif score >= 60:
+            grade = "B — Good"
+        elif score >= 45:
+            grade = "C — Average"
+        elif score >= 30:
+            grade = "D — Below Average"
+        else:
+            grade = "F — Critical"
+
+        health_data.append({
+            "name": r["bu"],
+            "inMarket": im,
+            "subs90d": subs_90,
+            "ints90d": ints_90,
+            "verbals": verbals,
+            "avgDaysInMarket": avg_dim,
+            "weeklyTargetPct": weekly_pct,
+            "healthScore": score,
+            "grade": grade,
+            "drilldown": f"Show detailed performance breakdown for BU {r['bu']}",
+        })
+
+    health_data.sort(key=lambda x: -x["healthScore"])
+    a_count = sum(1 for d in health_data if d["grade"].startswith("A"))
+    f_count = sum(1 for d in health_data if d["grade"].startswith("F"))
+    cards.append({
+        "id": "bu_health_scorecard",
+        "title": "BU Health Scorecard",
+        "description": f"{a_count} excellent, {f_count} critical out of {len(health_data)} active BUs — composite score based on submissions, interviews, placements & velocity",
+        "chartType": "table",
+        "data": health_data,
+    })
+
     return {"cards": cards, "generated_at": datetime.now().isoformat()}

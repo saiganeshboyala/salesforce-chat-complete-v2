@@ -156,12 +156,12 @@ def find_cached_query(question):
             if not sql or not sql.strip().upper().startswith("SELECT"):
                 continue
 
-            if feedback == "bad":
+            if feedback not in ("good", "corrected"):
                 continue
 
-            threshold = SIMILARITY_THRESHOLD_VERIFIED if feedback == "good" else SIMILARITY_THRESHOLD_UNVERIFIED
+            threshold = SIMILARITY_THRESHOLD_VERIFIED
 
-            if used_count >= 3 and feedback != "bad":
+            if used_count >= 3:
                 threshold -= 0.02
 
             if score >= threshold:
