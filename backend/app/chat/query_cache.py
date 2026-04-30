@@ -39,11 +39,13 @@ def _embed(text):
     return response.data[0].embedding
 
 
-def _reset_qdrant_storage():
-    import shutil
-    persist = Path(settings.data_dir) / "qdrant"
-    shutil.rmtree(persist, ignore_errors=True)
-    persist.mkdir(parents=True, exist_ok=True)
+def _patch_qdrant_models():
+    try:
+        from qdrant_client.http.models import CreateCollection
+        if hasattr(CreateCollection, "model_config"):
+            CreateCollection.model_config["extra"] = "ignore"
+    except Exception:
+        pass
 
 
 def init_cache():
@@ -51,31 +53,26 @@ def init_cache():
     global _initialized
     if _initialized:
         return
-    from qdrant_client.models import Distance, VectorParams
-    for attempt in range(2):
-        try:
-            client = _get_qdrant()
-            collections = [c.name for c in client.get_collections().collections]
-            if COLLECTION not in collections:
-                client.create_collection(
-                    collection_name=COLLECTION,
-                    vectors_config=VectorParams(
-                        size=settings.embedding_dimensions,
-                        distance=Distance.COSINE,
-                    ),
-                )
-                logger.info("Query cache collection created")
-            else:
-                info = client.get_collection(COLLECTION)
-                logger.info(f"Query cache loaded: {info.points_count} cached queries")
-            _initialized = True
-            return
-        except Exception as e:
-            if attempt == 0:
-                logger.warning(f"Query cache init failed (attempt 1), resetting storage: {e}")
-                _reset_qdrant_storage()
-            else:
-                logger.warning(f"Query cache init failed after reset: {e}")
+    _patch_qdrant_models()
+    try:
+        from qdrant_client.models import Distance, VectorParams
+        client = _get_qdrant()
+        collections = [c.name for c in client.get_collections().collections]
+        if COLLECTION not in collections:
+            client.create_collection(
+                collection_name=COLLECTION,
+                vectors_config=VectorParams(
+                    size=settings.embedding_dimensions,
+                    distance=Distance.COSINE,
+                ),
+            )
+            logger.info("Query cache collection created")
+        else:
+            info = client.get_collection(COLLECTION)
+            logger.info(f"Query cache loaded: {info.points_count} cached queries")
+        _initialized = True
+    except Exception as e:
+        logger.warning(f"Query cache init failed: {e}")
 
 
 def cache_query(question, sql, feedback=None):

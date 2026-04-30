@@ -63,6 +63,7 @@ export function useChat(onSessionChanged) {
     let finalData = null
     let finalRoute = null
     let finalSuggestions = null
+    let finalConfidence = null
 
     const applyPatch = (patch) => {
       setMessages(prev => prev.map(m => m.id === asstId ? { ...m, ...patch } : m))
@@ -137,6 +138,7 @@ export function useChat(onSessionChanged) {
                 if (evt.data.soql) finalSoql = evt.data.soql
                 if (evt.data.data) finalData = evt.data.data
                 if (evt.data.suggestions) finalSuggestions = evt.data.suggestions
+                if (evt.data.confidence != null) finalConfidence = evt.data.confidence
                 if (evt.data.file_download) applyPatch({ fileDownload: evt.data.file_download })
               }
               break
@@ -151,6 +153,7 @@ export function useChat(onSessionChanged) {
         soql: finalSoql,
         data: finalData,
         route: finalRoute,
+        confidence: finalConfidence,
         suggestions: finalSuggestions || [],
         streaming: false,
       })

@@ -665,7 +665,7 @@ export default function App() {
                       {msg.role === 'assistant' && !msg.isError && (
                         <>
                           {msg.data?.records?.length > 0 && <DataTable records={msg.data.records} totalSize={msg.data.totalSize} />}
-                          <SOQLBlock soql={msg.soql} route={msg.data?.route} />
+                          <SOQLBlock soql={msg.soql} route={msg.data?.route} confidence={msg.confidence} />
                           {!msg.streaming && (
                             <div className="msg-actions-row">
                               <MessageActions message={msg} />

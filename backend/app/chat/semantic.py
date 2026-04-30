@@ -1099,6 +1099,8 @@ async def handle_semantic_query(question):
         if not status:
             wheres.append('"Student_Marketing_Status__c" = \'In Market\'')
 
+    wants_bu_detail = any(w in q for w in ["with bu", "bu details", "bu detail", "bu name", "bu info",
+                                              "with manager", "manager details", "manager name"])
     if bu_name:
         if entity == "students":
             needs_bu_join = True
@@ -1107,14 +1109,24 @@ async def handle_semantic_query(question):
             wheres.append(f'"BU_Name__c" ILIKE \'%{bu_name}%\'')
         elif entity == "interviews":
             wheres.append(f'm."Name" ILIKE \'%{bu_name}%\'')
+    elif wants_bu_detail and entity == "students":
+        needs_bu_join = True
 
     if time_start:
+        date_col = ent["date_field"]
+        if entity == "students" and status:
+            status_date_map = {
+                "Verbal Confirmation": '"Verbal_Confirmation_Date__c"',
+                "Project Started": '"Marketing_Start_Date__c"',
+                "In Market": '"Marketing_Start_Date__c"',
+            }
+            date_col = status_date_map.get(status, date_col)
         if entity == "interviews" and ent.get("needs_join"):
-            wheres.append(f'i.{ent["date_field"]} >= {time_start} AND i.{ent["date_field"]} < {time_end}')
+            wheres.append(f'i.{date_col} >= {time_start} AND i.{date_col} < {time_end}')
         elif entity == "students" and needs_bu_join:
-            wheres.append(f's.{ent["date_field"]} >= {time_start} AND s.{ent["date_field"]} < {time_end}')
+            wheres.append(f's.{date_col} >= {time_start} AND s.{date_col} < {time_end}')
         else:
-            wheres.append(f'{ent["date_field"]} >= {time_start} AND {ent["date_field"]} < {time_end}')
+            wheres.append(f'{date_col} >= {time_start} AND {date_col} < {time_end}')
 
     # Numeric filter: rate/amount above/below X
     rate_m = re.search(r'(?:rate|amount|bill\s*rate)\s+(?:is\s+)?(?:above|over|greater than|>|more than|exceeds?|higher than)\s*(\d+)', q)

@@ -2439,6 +2439,153 @@ async def _route(question):
     return "SQL"
 
 
+VERIFY_SQL_PROMPT = """You are a SQL verification expert. Given a user's question and the SQL that was generated, check if the SQL correctly answers the question.
+
+Check for these specific issues:
+1. NEGATION MISMATCH: User asked "not in market" but SQL uses = 'In Market' (should use !=)
+2. WRONG TABLE: User asked about interviews but SQL queries Submissions (or vice versa)
+3. WRONG DATE RANGE: User asked "this month" but SQL filters "this week" (or vice versa)
+4. WRONG AGGREGATION: User asked "how many" but SQL returns records (should use COUNT)
+5. WRONG GROUP BY: User asked "BU wise" but SQL doesn't GROUP BY BU
+6. WRONG FILTER: User asked about a specific status/person but SQL filters something else
+7. MISSING JOIN: Query needs data from related tables but doesn't JOIN them
+
+If the SQL CORRECTLY answers the question, respond with exactly: VALID
+If there is a mismatch, respond with a brief description of the problem (one line, under 100 chars).
+
+IMPORTANT: Be strict. Even small mismatches matter — wrong date range, missing negation, or wrong status value means the user gets wrong data."""
+
+
+async def _validate_answer_logic(question, sql):
+    """Verify that generated SQL actually answers the user's question."""
+    q_lower = question.lower()
+
+    # Rule-based checks first (fast, no AI call)
+    negation_words = {"not", "no", "without", "zero", "never", "don't", "doesn't", "aren't", "isn't", "except", "exclude"}
+    q_words = set(q_lower.split())
+    has_negation = bool(q_words & negation_words)
+    sql_upper = sql.upper()
+    sql_has_negation = "NOT IN" in sql_upper or "!=" in sql_upper or "NOT LIKE" in sql_upper or "<>" in sql_upper
+
+    if has_negation and not sql_has_negation:
+        neg_word = (q_words & negation_words).pop()
+        return f"Question has negation '{neg_word}' but SQL has no NOT IN/!= — likely filtering wrong direction"
+
+    if not has_negation and sql_has_negation:
+        if not any(w in q_lower for w in ["other than", "besides", "remaining"]):
+            pass  # NOT IN can be legitimate for subqueries
+
+    # Check date range alignment
+    date_terms = {
+        "today": "CURRENT_DATE",
+        "yesterday": "INTERVAL '1 day'",
+        "this week": "DATE_TRUNC('week'",
+        "last week": "INTERVAL '1 week'",
+        "this month": "DATE_TRUNC('month'",
+        "last month": "INTERVAL '1 month'",
+    }
+    for term, sql_marker in date_terms.items():
+        if term in q_lower and sql_marker not in sql:
+            other_dates = [t for t, m in date_terms.items() if t != term and m in sql]
+            if other_dates:
+                return f"Question asks for '{term}' but SQL filters for '{other_dates[0]}'"
+
+    # Check entity alignment
+    entity_checks = [
+        (["submission", "submissions", "subs"], '"Submissions__c"'),
+        (["interview", "interviews"], '"Interviews__c"'),
+        (["student", "students"], '"Student__c"'),
+    ]
+    for terms, table in entity_checks:
+        if any(t in q_lower for t in terms):
+            if table not in sql and not any(t in q_lower for t in ["rate", "conversion", "ratio"]):
+                other_tables = [t for _, t in entity_checks if t in sql and t != table]
+                if other_tables:
+                    entity = next(t for t in terms if t in q_lower)
+                    return f"Question asks about '{entity}' but SQL queries {other_tables[0]} instead of {table}"
+
+    # Check aggregation alignment
+    wants_count = any(w in q_lower for w in ["how many", "how much", "total", "count of", "number of"])
+    has_count = "COUNT(" in sql_upper
+    wants_list = any(w in q_lower for w in ["list", "show", "details", "names of", "who are"])
+    if wants_count and not has_count and "GROUP BY" not in sql_upper:
+        return "Question asks for a count but SQL returns records instead of COUNT(*)"
+
+    # Check group-by alignment
+    wants_group = any(w in q_lower for w in ["bu wise", "by bu", "tech wise", "by technology",
+                                              "visa wise", "by visa", "status wise", "by status",
+                                              "manager wise", "by manager", "recruiter wise", "by recruiter"])
+    if wants_group and "GROUP BY" not in sql_upper:
+        return "Question asks for a breakdown/group-by but SQL doesn't use GROUP BY"
+
+    # AI-based verification for non-obvious cases (only if rule-based passed)
+    try:
+        verdict = await _call_ai(
+            VERIFY_SQL_PROMPT,
+            f"User question: {question}\nGenerated SQL: {sql}",
+            max_tokens=100, temperature=0,
+        )
+        if verdict:
+            verdict = verdict.strip()
+            if verdict.upper().startswith("VALID"):
+                return None
+            return verdict
+    except Exception as e:
+        logger.debug(f"SQL verification AI call failed: {e}")
+
+    return None
+
+
+def _compute_confidence(question, sql, soql_result, soql_recs, route, was_cached=False, was_verified=False):
+    """Compute a confidence score (0-100) for the answer."""
+    if route == "DOMAIN":
+        return 99
+    if route == "SEMANTIC":
+        return 95
+
+    score = 75
+
+    if was_cached:
+        score += 10
+    if was_verified:
+        score += 8
+
+    if soql_recs is None:
+        return max(10, score - 40)
+
+    rec_count = len(soql_recs) if soql_recs else 0
+
+    if rec_count == 0:
+        score -= 15
+    elif rec_count > 0:
+        score += 5
+
+    q_lower = question.lower()
+    sql_upper = sql.upper() if sql else ""
+
+    wants_count = any(w in q_lower for w in ["how many", "how much", "total", "count of"])
+    if wants_count and "COUNT(" in sql_upper and rec_count == 1:
+        score += 10
+    elif wants_count and "COUNT(" not in sql_upper:
+        score -= 10
+
+    wants_group = any(w in q_lower for w in ["bu wise", "by bu", "tech wise", "by technology", "breakdown", "each"])
+    if wants_group and "GROUP BY" in sql_upper and rec_count > 1:
+        score += 5
+
+    has_date_filter = any(kw in sql_upper for kw in ["CURRENT_DATE", "NOW()", "INTERVAL", "DATE_TRUNC"])
+    date_in_question = any(w in q_lower for w in ["today", "yesterday", "this week", "last week", "this month", "last month"])
+    if date_in_question and has_date_filter:
+        score += 5
+    elif date_in_question and not has_date_filter:
+        score -= 10
+
+    if sql and ("ILIKE" in sql_upper or "LIKE" in sql_upper):
+        score -= 3
+
+    return max(5, min(99, score))
+
+
 def _verify_answer_counts(answer, soql_result, soql_recs, question):
     """Post-verify: if AI answer has a count number, check it matches actual DB result."""
     if not answer or not soql_recs:
@@ -2787,21 +2934,22 @@ async def answer_question(question, conversation_history=None, username=None, la
     if not schema_text or "No schema" in schema_text:
         return {"answer": "Schema not loaded. Run: python -m scripts.refresh_schema", "soql": None, "data": None}
 
-    # Fast path 1: Semantic layer (always runs — no AI, guaranteed correct)
+    # Fast path 1: Semantic layer — use its SQL/data but let AI write the answer
     semantic = await handle_semantic_query(question)
+    sem_has_data = False
     if semantic:
-        elapsed = round(time.time() - start_time, 2)
-        logger.info(f"[ROUTE=SEMANTIC] Q='{question[:60]}' rows={len(semantic.get('data', {}).get('records', []))} time={elapsed}s")
-        await save_interaction(question, semantic["soql"], semantic["answer"], "SQL", username=username)
-        suggestions = await _generate_suggestions(question, semantic["answer"])
-        return {
-            "answer": semantic["answer"],
-            "soql": semantic["soql"],
-            "route": "SQL",
-            "rag_used": False,
-            "suggestions": suggestions,
-            "data": semantic["data"],
-        }
+        sem_recs = semantic.get("data", {}).get("records", []) if semantic.get("data") else []
+        sem_has_data = len(sem_recs) > 0
+        if sem_has_data and len(sem_recs) == 1 and "cnt" in sem_recs[0] and sem_recs[0]["cnt"] == 0:
+            sem_has_data = False
+        if sem_has_data:
+            soql_query = semantic["soql"]
+            soql_result = semantic.get("data", {})
+            soql_recs = sem_recs
+            route = "SEMANTIC"
+            logger.info(f"[ROUTE=SEMANTIC] Q='{question[:60]}' rows={len(sem_recs)} — passing to AI for answer")
+        else:
+            logger.info(f"Semantic returned 0 records, falling through to AI path: {question[:60]}")
 
     # Fast path 2: Direct report handler (BU-wise aggregate reports)
     direct = await _handle_direct_report(question)
@@ -2819,13 +2967,17 @@ async def answer_question(question, conversation_history=None, username=None, la
             "data": direct["data"],
         }
 
-    route = await _route(question)
+    # If semantic layer already provided data, skip routing and SQL generation
+    if not (semantic and sem_has_data):
+        route = await _route(question)
+        soql_query, soql_result, soql_recs = None, None, None
+    else:
+        route = route  # already set above
     logger.info(f"Route: {route} | Q: {question[:60]}")
 
-    soql_query, soql_result, soql_recs = None, None, None
     rag_results = None
 
-    if route in ("SQL", "BOTH"):
+    if not (semantic and sem_has_data) and route in ("SQL", "BOTH"):
         soql_query, soql_result, soql_recs = await _soql_path(question, schema_text, conversation_history, last_soql=last_soql)
 
         if soql_recs is None or (soql_recs is not None and len(soql_recs) == 0):
@@ -3011,34 +3163,6 @@ async def answer_question(question, conversation_history=None, username=None, la
         if data_summary:
             parts.append(data_summary)
 
-    if _is_group_question(question):
-        template_answer = _build_group_template_answer(question, soql_recs)
-        if template_answer:
-            total = sum(r.get("cnt", 0) for r in soql_recs)
-            elapsed = round(time.time() - start_time, 2)
-            logger.info(f"[ROUTE=GROUP_TEMPLATE] Q='{question[:60]}' groups={len(soql_recs)} total={total} time={elapsed}s")
-            await save_interaction(question, soql_query, template_answer, route, username=username)
-            suggestions = await _generate_suggestions(question, template_answer)
-            return {
-                "answer": template_answer, "soql": soql_query, "route": route,
-                "rag_used": False, "suggestions": suggestions,
-                "data": {"totalSize": total, "records": soql_recs[:200], "query": soql_query, "route": route},
-            }
-
-    if _is_count_question(question):
-        count_val = _extract_count_value(soql_recs)
-        if count_val is not None:
-            template_answer = _build_count_answer(question, count_val)
-            elapsed = round(time.time() - start_time, 2)
-            logger.info(f"[ROUTE=COUNT_TEMPLATE] Q='{question[:60]}' count={count_val} time={elapsed}s")
-            await save_interaction(question, soql_query, template_answer, route, username=username)
-            suggestions = await _generate_suggestions(question, template_answer)
-            return {
-                "answer": template_answer, "soql": soql_query, "route": route,
-                "rag_used": False, "suggestions": suggestions,
-                "data": {"totalSize": count_val, "records": soql_recs[:200], "query": soql_query, "route": route},
-            }
-
     # Detect if this is a WhatsApp-style report request
     use_whatsapp = _is_whatsapp_report(question)
     if use_whatsapp:
@@ -3066,12 +3190,15 @@ async def answer_question(question, conversation_history=None, username=None, la
     await save_interaction(question, soql_query, answer or "", route, username=username)
     suggestions = await _generate_suggestions(question, answer or "")
 
+    confidence = _compute_confidence(question, soql_query, soql_result, soql_recs, route)
+
     return {
         "answer": answer or "Found data but couldn't summarize.",
         "soql": soql_query,
         "route": route,
         "rag_used": rag_results is not None and len(rag_results) > 0,
         "suggestions": suggestions,
+        "confidence": confidence,
         "data": {
             "totalSize": soql_result.get("totalSize", 0) if soql_result and "error" not in soql_result else 0,
             "records": [r for r in (soql_recs or []) if not str(r.get("_query_label", "")).startswith("_summary_")][:200],
@@ -3163,27 +3290,24 @@ async def answer_question_stream(question, conversation_history=None, username=N
 
     yield {"type": "thinking", "data": "Analyzing question"}
 
-    # Fast path 1: Semantic layer (always runs — no AI, guaranteed correct)
+    # Fast path 1: Semantic layer — use its SQL/data but let AI write the answer
     semantic = await handle_semantic_query(question)
+    sem_has_data = False
     if semantic:
-        logger.info(f"Semantic handler (stream): {question[:60]}")
-        yield {"type": "route", "data": "SQL"}
-        yield {"type": "thinking", "data": "Matched semantic pattern"}
-        yield {"type": "soql", "data": semantic["soql"]}
-        yield {"type": "data", "data": semantic["data"]}
-        yield {"type": "thinking_done", "data": None}
-        yield {"type": "token", "data": semantic["answer"]}
-        await save_interaction(question, semantic["soql"], semantic["answer"], "SQL", username=username)
-        suggestions = await _generate_suggestions(question, semantic["answer"])
-        yield {"type": "done", "data": {
-            "answer": semantic["answer"],
-            "soql": semantic["soql"],
-            "route": "SQL",
-            "rag_used": False,
-            "suggestions": suggestions,
-            "data": semantic["data"],
-        }}
-        return
+        sem_recs = semantic.get("data", {}).get("records", []) if semantic.get("data") else []
+        sem_has_data = len(sem_recs) > 0
+        if sem_has_data and len(sem_recs) == 1 and "cnt" in sem_recs[0] and sem_recs[0]["cnt"] == 0:
+            sem_has_data = False
+        if sem_has_data:
+            soql_query = semantic["soql"]
+            soql_result = semantic.get("data", {})
+            soql_recs = sem_recs
+            route = "SEMANTIC"
+            logger.info(f"[ROUTE=SEMANTIC] (stream) Q='{question[:60]}' rows={len(sem_recs)} — passing to AI for answer")
+            yield {"type": "soql", "data": soql_query}
+            yield {"type": "data", "data": soql_result}
+        else:
+            logger.info(f"Semantic returned 0 records (stream), falling through to AI path: {question[:60]}")
 
     # Fast path 2: Direct report handler (BU-wise aggregate reports)
     direct = await _handle_direct_report(question)
@@ -3207,15 +3331,17 @@ async def answer_question_stream(question, conversation_history=None, username=N
             }}
             return
 
-    route = await _route(question)
+    # If semantic layer already provided data, skip routing and SQL generation
+    if not (semantic and sem_has_data):
+        route = await _route(question)
+        soql_query, soql_result, soql_recs = None, None, None
     logger.info(f"Route (stream): {route} | Q: {question[:60]}")
     yield {"type": "route", "data": route}
     yield {"type": "thinking", "data": f"Route → {route}"}
 
-    soql_query, soql_result, soql_recs = None, None, None
     rag_results = None
 
-    if route in ("SQL", "BOTH"):
+    if not (semantic and sem_has_data) and route in ("SQL", "BOTH"):
         # Check cache
         if not last_soql:
             cached = _cache_get(question)
@@ -3443,45 +3569,6 @@ async def answer_question_stream(question, conversation_history=None, username=N
         if data_summary:
             parts.append(data_summary)
 
-    if _is_group_question(question):
-        template_answer = _build_group_template_answer(question, soql_recs)
-        if template_answer:
-            yield {"type": "thinking", "data": "Formatting grouped results"}
-            yield {"type": "thinking_done", "data": None}
-            yield {"type": "token", "data": template_answer}
-            await save_interaction(question, soql_query, template_answer, route, username=username)
-            suggestions = await _generate_suggestions(question, template_answer)
-            if suggestions:
-                yield {"type": "suggestions", "data": suggestions}
-            yield {"type": "done", "data": {
-                "answer": template_answer,
-                "soql": soql_query,
-                "route": route,
-                "data": data_payload,
-                "suggestions": suggestions,
-            }}
-            return
-
-    if _is_count_question(question):
-        count_val = _extract_count_value(soql_recs)
-        if count_val is not None:
-            template_answer = _build_count_answer(question, count_val)
-            yield {"type": "thinking", "data": "Formatting count answer"}
-            yield {"type": "thinking_done", "data": None}
-            yield {"type": "token", "data": template_answer}
-            await save_interaction(question, soql_query, template_answer, route, username=username)
-            suggestions = await _generate_suggestions(question, template_answer)
-            if suggestions:
-                yield {"type": "suggestions", "data": suggestions}
-            yield {"type": "done", "data": {
-                "answer": template_answer,
-                "soql": soql_query,
-                "route": route,
-                "data": data_payload,
-                "suggestions": suggestions,
-            }}
-            return
-
     # Detect if this is a WhatsApp-style report request
     use_whatsapp = _is_whatsapp_report(question)
     if use_whatsapp:
@@ -3526,6 +3613,8 @@ async def answer_question_stream(question, conversation_history=None, username=N
     if suggestions:
         yield {"type": "suggestions", "data": suggestions}
 
+    confidence = _compute_confidence(question, soql_query, soql_result, soql_recs, route)
+
     yield {
         "type": "done",
         "data": {
@@ -3534,5 +3623,6 @@ async def answer_question_stream(question, conversation_history=None, username=N
             "route": route,
             "data": data_payload,
             "suggestions": suggestions,
+            "confidence": confidence,
         },
     }
