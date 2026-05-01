@@ -14,6 +14,7 @@ import csv, io, json, logging, re, uuid
 from datetime import datetime
 from pathlib import Path
 from app.config import settings
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def save_upload(username: str, filename: str, raw: bytes) -> dict:
         "id": upload_id,
         "filename": filename,
         "size_bytes": len(raw),
-        "uploaded_at": datetime.now().isoformat(),
+        "uploaded_at": now_cst().isoformat(),
         "source_file": src_name,
         "headers": headers,
         "row_count": total,

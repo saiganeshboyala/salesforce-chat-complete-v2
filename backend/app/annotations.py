@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 
 from app.config import settings
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def create_note(username: str, payload: dict) -> dict:
         raise ValueError("record_id required")
     if not text:
         raise ValueError("text required")
-    now = datetime.now().isoformat()
+    now = now_cst().isoformat()
     note = {
         "id": uuid.uuid4().hex,
         "record_id": rid[:64],
@@ -122,7 +123,7 @@ def update_note(username: str, note_id: str, patch: dict) -> dict:
                     n["text"] = str(patch["text"] or "").strip()[:2000]
                 if "tags" in patch:
                     n["tags"] = _clean_tags(patch["tags"])
-                n["updated_at"] = datetime.now().isoformat()
+                n["updated_at"] = now_cst().isoformat()
                 notes[i] = n
                 data["notes"] = notes
                 _save(username, data)

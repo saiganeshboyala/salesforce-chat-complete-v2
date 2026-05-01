@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from app.config import settings
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 _lock = Lock()
@@ -41,7 +42,7 @@ def _make_title(first_user_msg: str) -> str:
 
 
 def _new_session(session_id: str) -> dict:
-    now = datetime.now().isoformat()
+    now = now_cst().isoformat()
     return {
         "id": session_id,
         "title": "New Chat",
@@ -223,7 +224,7 @@ async def load_session(username: str | None, session_id: str) -> dict:
 
 
 async def save_session(username: str | None, session: dict) -> None:
-    session["updated_at"] = datetime.now().isoformat()
+    session["updated_at"] = now_cst().isoformat()
     if not username:
         _anon_sessions[session["id"]] = session
         return

@@ -10,6 +10,7 @@ from threading import Lock
 from app.config import settings
 from app.salesforce.schema import get_schema
 from app.salesforce.soql_executor import execute_soql
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +268,7 @@ def create_report(username: str, payload: dict) -> dict:
     if not name:
         raise ValueError("name is required")
     config = _validate_config(payload)
-    now = datetime.now().isoformat()
+    now = now_cst().isoformat()
     report = {
         "id": uuid.uuid4().hex,
         "name": name[:120],
@@ -298,7 +299,7 @@ def update_report(username: str, report_id: str, patch: dict) -> dict:
                     r["name"] = str(patch["name"])[:120]
                 if "description" in patch:
                     r["description"] = str(patch["description"] or "")[:500]
-                r["updated_at"] = datetime.now().isoformat()
+                r["updated_at"] = now_cst().isoformat()
                 reports[i] = r
                 data["reports"] = reports
                 _save(username, data)

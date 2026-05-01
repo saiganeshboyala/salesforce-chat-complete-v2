@@ -1,6 +1,7 @@
 """PDF report generation for chat answers."""
 from datetime import datetime
 from io import BytesIO
+from app.timezone import now_cst
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -110,7 +111,7 @@ def build_pdf(
 
     story = []
     story.append(Paragraph("Fyxo Data Report", h_title))
-    ts = datetime.now().strftime("%B %d, %Y · %I:%M %p")
+    ts = now_cst().strftime("%B %d, %Y · %I:%M %p")
     story.append(Paragraph(f"Generated for <b>{_escape(username)}</b> · {ts}", h_sub))
 
     story.append(Paragraph("Question", h_section))

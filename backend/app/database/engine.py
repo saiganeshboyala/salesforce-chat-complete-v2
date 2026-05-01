@@ -28,6 +28,8 @@ def _build_engine():
         clean_url,
         pool_size=10,
         max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=300,
         echo=False,
         connect_args=connect_args,
     )

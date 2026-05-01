@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from app.config import settings
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 _MAX_ENTRIES = 10000
@@ -123,7 +124,7 @@ async def log_action(username: str | None, action: str, details: dict | None = N
             logger.warning(f"DB audit log failed: {e}")
 
     entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_cst().isoformat(),
         "username": username or "anonymous",
         "action": action,
         "details": details or {},

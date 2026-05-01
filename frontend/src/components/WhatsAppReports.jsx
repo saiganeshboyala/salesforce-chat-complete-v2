@@ -34,6 +34,8 @@ export default function WhatsAppReports() {
   const [success, setSuccess] = useState(null)
   const [syncInfo, setSyncInfo] = useState(null)
   const [completed, setCompleted] = useState({})
+  const [selectedDate, setSelectedDate] = useState('')
+  const [dateMode, setDateMode] = useState('today')
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -55,7 +57,8 @@ export default function WhatsAppReports() {
     if (!silent) { setError(null); setSuccess(null) }
     try {
       const token = localStorage.getItem('token')
-      const res = await fetch(`/api/wa-reports/${reportId}`, {
+      const params = selectedDate ? `?report_date=${selectedDate}` : ''
+      const res = await fetch(`/api/wa-reports/${reportId}${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) {
@@ -80,7 +83,7 @@ export default function WhatsAppReports() {
     } finally {
       setDownloading(prev => ({ ...prev, [reportId]: false }))
     }
-  }, [])
+  }, [selectedDate])
 
   const generateAll = useCallback(async (category) => {
     const items = reports.filter(r => (r.category || 'other') === category)
@@ -118,9 +121,50 @@ export default function WhatsAppReports() {
       <div className="wa-topbar">
         <div className="wa-topbar-left">
           <h2 className="wa-topbar-title">WhatsApp Reports</h2>
-          <span className="wa-topbar-sub">Generate BU-wise / Manager-wise WhatsApp-ready Excel reports</span>
+          <span className="wa-topbar-sub">
+            Generate BU-wise / Manager-wise WhatsApp-ready Excel reports
+            {selectedDate && (
+              <span className="wa-date-badge">
+                {dateMode === 'month'
+                  ? new Date(selectedDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })
+                  : new Date(selectedDate + 'T00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+              </span>
+            )}
+          </span>
         </div>
         <div className="wa-topbar-right">
+          <div className="wa-date-picker">
+            <div className="wa-date-tabs">
+              <button
+                className={`wa-date-tab ${dateMode === 'today' ? 'active' : ''}`}
+                onClick={() => { setDateMode('today'); setSelectedDate('') }}
+              >Today</button>
+              <button
+                className={`wa-date-tab ${dateMode === 'date' ? 'active' : ''}`}
+                onClick={() => setDateMode('date')}
+              >Date</button>
+              <button
+                className={`wa-date-tab ${dateMode === 'month' ? 'active' : ''}`}
+                onClick={() => setDateMode('month')}
+              >Month</button>
+            </div>
+            {dateMode === 'date' && (
+              <input
+                type="date"
+                className="wa-date-input"
+                value={selectedDate}
+                onChange={e => setSelectedDate(e.target.value)}
+              />
+            )}
+            {dateMode === 'month' && (
+              <input
+                type="month"
+                className="wa-date-input"
+                value={selectedDate ? selectedDate.slice(0, 7) : ''}
+                onChange={e => setSelectedDate(e.target.value ? `${e.target.value}-01` : '')}
+              />
+            )}
+          </div>
           <div className="wa-sync-pill">
             <span className={`wa-sync-dot ${syncInfo?.running ? 'syncing' : ''}`} />
             {syncInfo?.running
@@ -276,11 +320,75 @@ export default function WhatsAppReports() {
         .wa-topbar-sub {
           font-size: 0.78rem;
           color: var(--text-muted);
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .wa-date-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 1px 8px;
+          border-radius: 6px;
+          background: var(--accent-muted);
+          color: var(--accent);
+          font-size: 0.72rem;
+          font-weight: 600;
         }
         .wa-topbar-right {
           display: flex;
           align-items: center;
           gap: 10px;
+        }
+
+        /* ─── Date picker ─── */
+        .wa-date-picker {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .wa-date-tabs {
+          display: flex;
+          border-radius: 8px;
+          overflow: hidden;
+          border: 1px solid var(--border);
+          background: var(--bg-surface);
+        }
+        .wa-date-tab {
+          padding: 5px 12px;
+          border: none;
+          background: none;
+          font-size: 0.75rem;
+          font-weight: 600;
+          font-family: var(--font-sans);
+          color: var(--text-muted);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .wa-date-tab:not(:last-child) {
+          border-right: 1px solid var(--border);
+        }
+        .wa-date-tab.active {
+          background: var(--accent);
+          color: #fff;
+        }
+        .wa-date-tab:hover:not(.active) {
+          background: var(--bg-elevated);
+          color: var(--text-primary);
+        }
+        .wa-date-input {
+          padding: 5px 10px;
+          border-radius: 7px;
+          border: 1px solid var(--border);
+          background: var(--bg-surface);
+          color: var(--text-primary);
+          font-size: 0.78rem;
+          font-family: var(--font-sans);
+          outline: none;
+          transition: border-color 0.15s;
+        }
+        .wa-date-input:focus {
+          border-color: var(--accent);
         }
 
         /* ─── Sync pill ─── */

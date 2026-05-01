@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import text
 from app.database.engine import async_session
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ async def compute_analytics():
     })
 
     # 6. Verbal Confirmations Trend (last 6 months)
-    now = datetime.now()
+    now = now_cst()
     six_months_ago = (now - relativedelta(months=6)).strftime('%Y-%m-01')
     conf_trend = await _query(
         'SELECT TO_CHAR("Verbal_Confirmation_Date__c", \'YYYY-MM\') AS month, COUNT(*) AS cnt '
@@ -572,7 +573,7 @@ async def compute_analytics():
         'LIMIT 2000'
     )
     prob_data = []
-    today = datetime.now().date()
+    today = now_cst().date()
     for r in student_prob:
         dim = int(r["dim"] or 0)
         total_subs = int(r["total_subs"] or 0)
@@ -856,4 +857,4 @@ async def compute_analytics():
         "data": health_data,
     })
 
-    return {"cards": cards, "generated_at": datetime.now().isoformat()}
+    return {"cards": cards, "generated_at": now_cst().isoformat()}

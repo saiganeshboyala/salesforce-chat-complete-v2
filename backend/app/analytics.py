@@ -5,6 +5,7 @@ All models run real SOQL queries, no ML training needed.
 import logging
 from datetime import datetime
 from app.salesforce.soql_executor import execute_soql
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ async def compute_analytics():
 
     # 6. Verbal Confirmations Trend (last 6 months)
     months_data = []
-    now = datetime.now()
+    now = now_cst()
     for i in range(5, -1, -1):
         m = now.month - i
         y = now.year
@@ -361,4 +362,4 @@ async def compute_analytics():
         "data": expense_data,
     })
 
-    return {"cards": cards, "generated_at": datetime.now().isoformat()}
+    return {"cards": cards, "generated_at": now_cst().isoformat()}

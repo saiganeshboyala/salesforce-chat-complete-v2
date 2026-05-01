@@ -3,6 +3,7 @@ from datetime import datetime
 from app.chat.ai_engine import answer_question, answer_question_stream
 from app.chat.sessions import load_session, save_session, append_message
 from app.salesforce.schema import get_schema
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,9 @@ def _last_soql_in(messages):
 
 class ChatEngine:
     async def answer(self, session_id, question, username=None):
-        now = datetime.now().isoformat()
+        now = now_cst().isoformat()
         user_msg = {
-            "id": f"m_{int(datetime.now().timestamp() * 1000)}",
+            "id": f"m_{int(now_cst().timestamp() * 1000)}",
             "role": "user",
             "content": question,
             "ts": now,
@@ -36,14 +37,14 @@ class ChatEngine:
         result = await answer_question(question, history or None, username=username, last_soql=last_soql)
 
         asst_msg = {
-            "id": f"m_{int(datetime.now().timestamp() * 1000)}",
+            "id": f"m_{int(now_cst().timestamp() * 1000)}",
             "role": "assistant",
             "content": result.get("answer", ""),
             "soql": result.get("soql"),
             "data": result.get("data"),
             "suggestions": result.get("suggestions") or [],
             "question": question,
-            "ts": datetime.now().isoformat(),
+            "ts": now_cst().isoformat(),
         }
         await append_message(username, session_id, asst_msg)
         return result
@@ -55,9 +56,9 @@ class ChatEngine:
           - forwards every event to the caller
           - persists the assistant message once `done` arrives
         """
-        now = datetime.now().isoformat()
+        now = now_cst().isoformat()
         user_msg = {
-            "id": f"m_{int(datetime.now().timestamp() * 1000)}",
+            "id": f"m_{int(now_cst().timestamp() * 1000)}",
             "role": "user",
             "content": question,
             "ts": now,
@@ -79,14 +80,14 @@ class ChatEngine:
 
         if final is not None:
             asst_msg = {
-                "id": f"m_{int(datetime.now().timestamp() * 1000)}",
+                "id": f"m_{int(now_cst().timestamp() * 1000)}",
                 "role": "assistant",
                 "content": final.get("answer", ""),
                 "soql": final.get("soql"),
                 "data": final.get("data"),
                 "suggestions": final.get("suggestions") or [],
                 "question": question,
-                "ts": datetime.now().isoformat(),
+                "ts": now_cst().isoformat(),
             }
             await append_message(username, session_id, asst_msg)
 

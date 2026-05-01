@@ -4,6 +4,7 @@ Fyxo Chat — API Server with Authentication
 import csv, io, logging, re, threading
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
+from app.timezone import now_cst
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Depends, UploadFile, File, Request
@@ -75,7 +76,7 @@ def start_scheduler():
     def loop():
         import time, asyncio
         while True:
-            now = datetime.now()
+            now = now_cst()
             target = now.replace(hour=hour, minute=minute, second=0)
             if target <= now:
                 target += timedelta(days=1)
@@ -698,13 +699,21 @@ async def wa_reports_list(current_user=Depends(get_current_user)):
 
 
 @app.get("/api/wa-reports/{report_type}")
-async def wa_reports_download(report_type: str, current_user=Depends(get_current_user)):
+async def wa_reports_download(
+    report_type: str,
+    report_date: str = Query(None, description="Date for report (YYYY-MM-DD)"),
+    current_user=Depends(get_current_user),
+):
     entry = wa_reports.REPORT_REGISTRY.get(report_type)
     if not entry:
         raise HTTPException(404, f"Unknown report type: {report_type}")
     try:
-        xlsx_bytes = await entry["handler"]()
-        filename = f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        parsed_date = None
+        if report_date:
+            from datetime import date as date_cls
+            parsed_date = date_cls.fromisoformat(report_date)
+        xlsx_bytes = await entry["handler"](report_date=parsed_date)
+        filename = f"{report_type}_{now_cst().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return StreamingResponse(
             io.BytesIO(xlsx_bytes),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

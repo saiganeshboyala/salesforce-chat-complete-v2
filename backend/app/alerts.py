@@ -8,6 +8,7 @@ from threading import Lock
 
 from app.config import settings
 from app.salesforce.soql_executor import execute_soql
+from app.timezone import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def _clean_rule(r: dict) -> dict:
         "last_checked": r.get("last_checked"),
         "last_triggered": r.get("last_triggered"),
         "triggered": bool(r.get("triggered", False)),
-        "created_at": r.get("created_at") or datetime.now().isoformat(),
+        "created_at": r.get("created_at") or now_cst().isoformat(),
     }
 
 
@@ -186,7 +187,7 @@ async def check_all(username: str) -> list:
 async def _run_check(username: str, rule: dict, all_rules: list) -> dict:
     result = await execute_soql(rule["soql"])
     value = _extract_value(result)
-    now = datetime.now().isoformat()
+    now = now_cst().isoformat()
     last_value = rule.get("last_value")
     triggered = _evaluate(value, rule["condition"], rule["threshold"], last_value)
 

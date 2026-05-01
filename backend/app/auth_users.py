@@ -6,6 +6,7 @@ import json, logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from jose import JWTError, jwt
+from app.timezone import now_cst
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -83,7 +84,7 @@ def _load_users():
             "password": pwd_context.hash("admin123"),
             "name": "Admin",
             "role": "admin",
-            "created": datetime.now().isoformat(),
+            "created": now_cst().isoformat(),
         }
     }
     _save_users(default)
@@ -271,7 +272,7 @@ async def create_user(username, password, name, role="user"):
         "password": hash_password(password),
         "name": name,
         "role": role,
-        "created": datetime.now().isoformat(),
+        "created": now_cst().isoformat(),
     }
     _save_users(users)
     return users[username]

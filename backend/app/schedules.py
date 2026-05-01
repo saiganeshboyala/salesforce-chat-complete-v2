@@ -34,6 +34,7 @@ import asyncio, csv, json, logging, re, threading, time, uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from app.config import settings
+from app.timezone import now_cst
 from app.salesforce.soql_executor import execute_soql
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ def compute_next_run(
     day_of_month: int | None = None,
     after: datetime | None = None,
 ) -> datetime:
-    after = after or datetime.now()
+    after = after or now_cst()
     hour, minute = map(int, time_str.split(":"))
     candidate = after.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
@@ -144,7 +145,7 @@ def list_schedules(username: str) -> list[dict]:
 
 def create_schedule(username: str, payload: dict) -> dict:
     items = _load(username)
-    now = datetime.now()
+    now = now_cst()
     sid = f"sched_{uuid.uuid4().hex[:10]}"
     rec = {
         "id": sid,
@@ -213,7 +214,7 @@ def list_runs(username: str, schedule_id: str, limit: int = 20) -> list[dict]:
 
 async def _run_schedule(username: str, schedule: dict) -> dict:
     sid = schedule["id"]
-    ts = datetime.now()
+    ts = now_cst()
     ts_str = ts.strftime("%Y%m%d_%H%M%S")
     out_dir = _reports_dir(username, sid)
     csv_path = out_dir / f"{ts_str}.csv"
@@ -273,12 +274,12 @@ def _advance(schedule: dict, meta: dict) -> None:
         schedule["time"],
         schedule.get("weekday"),
         schedule.get("day_of_month"),
-        after=datetime.now(),
+        after=now_cst(),
     ).isoformat()
 
 
 async def _tick_once() -> None:
-    now = datetime.now()
+    now = now_cst()
     for username in _all_usernames():
         items = _load(username)
         changed = False

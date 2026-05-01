@@ -7,6 +7,7 @@ import io
 import logging
 from datetime import datetime, date, timedelta
 from sqlalchemy import text
+from app.timezone import today_cst
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -51,7 +52,7 @@ def _xlsx_bytes(rows: list[dict], columns: list[str], sheet_name: str = "Report"
 # 1. PreMarketing BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def premarketing_bu() -> bytes:
+async def premarketing_bu(report_date: date | None = None) -> bytes:
     sql = text("""
         SELECT
             COALESCE(m."Name", 'Unknown') AS bu_name,
@@ -112,13 +113,16 @@ async def premarketing_bu() -> bytes:
 # 2. Yesterday Submission Report BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def yesterday_submissions_bu() -> bytes:
-    today = date.today()
-    yesterday = today - timedelta(days=1)
-    if yesterday.weekday() == 6:
-        yesterday = yesterday - timedelta(days=1)
-    if yesterday.weekday() == 5:
-        yesterday = yesterday - timedelta(days=1)
+async def yesterday_submissions_bu(report_date: date | None = None) -> bytes:
+    if report_date:
+        yesterday = report_date
+    else:
+        today = today_cst()
+        yesterday = today - timedelta(days=1)
+        if yesterday.weekday() == 6:
+            yesterday = yesterday - timedelta(days=1)
+        if yesterday.weekday() == 5:
+            yesterday = yesterday - timedelta(days=1)
     date_str = yesterday.strftime("%B %d, %Y")
 
     bu_summary_sql = text("""
@@ -146,8 +150,6 @@ async def yesterday_submissions_bu() -> bytes:
         JOIN "Student__c" s ON sub."Student__c" = s."Id"
         LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
         WHERE sub."Submission_Date__c" = :yesterday
-          AND sub."Id" IS NOT NULL
-          AND s."Last_Submission_Date__c" IS NOT NULL
         ORDER BY m."Name", s."Offshore_Manager_Name__c", s."Name"
     """)
 
@@ -173,13 +175,12 @@ async def yesterday_submissions_bu() -> bytes:
         mgr = offshore_mgr or "NAN"
         if mgr not in bu_details[bu]:
             bu_details[bu][mgr] = []
-        lsd = f"{last_sub_date.month}/{last_sub_date.day}/{last_sub_date.year}" if last_sub_date else ""
-        if lsd:
-            bu_details[bu][mgr].append({
-                "student": student_name or "Unknown",
-                "recruiter": recruiter or "NAN",
-                "last_sub": lsd,
-            })
+        lsd = f"{last_sub_date.month}/{last_sub_date.day}/{last_sub_date.year}" if last_sub_date else "N/A"
+        bu_details[bu][mgr].append({
+            "student": student_name or "Unknown",
+            "recruiter": recruiter or "NAN",
+            "last_sub": lsd,
+        })
 
     def _perf_line(target_pct):
         if target_pct >= 100:
@@ -225,8 +226,8 @@ async def yesterday_submissions_bu() -> bytes:
 # 3. Last 3 Days No Submissions BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def no_submissions_3days_bu() -> bytes:
-    today = date.today()
+async def no_submissions_3days_bu(report_date: date | None = None) -> bytes:
+    today = report_date or today_cst()
 
     sql = text("""
         SELECT
@@ -240,13 +241,13 @@ async def no_submissions_3days_bu() -> bytes:
         WHERE s."Student_Marketing_Status__c" = 'In Market'
           AND s."Id" NOT IN (
               SELECT "Student__c" FROM "Submissions__c"
-              WHERE "Submission_Date__c" >= CURRENT_DATE - INTERVAL '3 days'
+              WHERE "Submission_Date__c" >= CAST(:ref_date AS date) - INTERVAL '3 days'
           )
         ORDER BY m."Name", s."Offshore_Manager_Name__c", s."Recruiter_Name__c", s."Name"
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"ref_date": today})
         rows = result.fetchall()
 
     bu_data = {}
@@ -308,8 +309,8 @@ async def no_submissions_3days_bu() -> bytes:
 # 4. Last 3 Days No Submissions Offshore Manager-wise
 # ────────────────────────────────────────────────────────────
 
-async def no_submissions_3days_offshore() -> bytes:
-    today = date.today()
+async def no_submissions_3days_offshore(report_date: date | None = None) -> bytes:
+    today = report_date or today_cst()
     date_str = today.strftime("%B %d, %Y")
 
     sql = text("""
@@ -322,13 +323,13 @@ async def no_submissions_3days_offshore() -> bytes:
         WHERE s."Student_Marketing_Status__c" = 'In Market'
           AND s."Id" NOT IN (
               SELECT "Student__c" FROM "Submissions__c"
-              WHERE "Submission_Date__c" >= CURRENT_DATE - INTERVAL '3 days'
+              WHERE "Submission_Date__c" >= CAST(:ref_date AS date) - INTERVAL '3 days'
           )
         ORDER BY s."Offshore_Manager_Name__c", s."Recruiter_Name__c", s."Name"
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"ref_date": today})
         rows = result.fetchall()
 
     mgr_data = {}
@@ -384,13 +385,16 @@ async def no_submissions_3days_offshore() -> bytes:
 # 5. Yesterday Submission Report Offshore Manager-wise
 # ────────────────────────────────────────────────────────────
 
-async def yesterday_submissions_offshore() -> bytes:
-    today = date.today()
-    yesterday = today - timedelta(days=1)
-    if yesterday.weekday() == 6:
-        yesterday -= timedelta(days=1)
-    if yesterday.weekday() == 5:
-        yesterday -= timedelta(days=1)
+async def yesterday_submissions_offshore(report_date: date | None = None) -> bytes:
+    if report_date:
+        yesterday = report_date
+    else:
+        today = today_cst()
+        yesterday = today - timedelta(days=1)
+        if yesterday.weekday() == 6:
+            yesterday -= timedelta(days=1)
+        if yesterday.weekday() == 5:
+            yesterday -= timedelta(days=1)
     date_str = yesterday.strftime("%B %d, %Y")
 
     summary_sql = text("""
@@ -449,7 +453,10 @@ async def yesterday_submissions_offshore() -> bytes:
         s = mgr_summary.get(mgr, {"in_market": 0, "sub_count": 0, "target": 0.0})
         lines = []
         lines.append(f"\U0001f4ca Yesterday Submission Report | \U0001f4c5 {date_str}\n")
-        lines.append(f"*{mgr}*")
+        lines.append(f"*{mgr}*\n")
+        lines.append(f"\U0001f465 In Market Count: {s['in_market']}")
+        lines.append(f"\U0001f4e4 Submissions Count: {s['sub_count']}")
+        lines.append(f"\U0001f3af %% Target: {s['target']}")
 
         details = mgr_details.get(mgr, [])
         for st in details:
@@ -476,7 +483,10 @@ async def yesterday_submissions_offshore() -> bytes:
 # 6. Interview Mandatory Fields BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def interview_mandatory_fields_bu() -> bytes:
+async def interview_mandatory_fields_bu(report_date: date | None = None) -> bytes:
+    ref = report_date or today_cst()
+    month_start = ref.replace(day=1)
+
     mandatory_fields = [
         ("Student_Otter_Performance__c", "Student Otter Performance"),
         ("Student_Technical_Explanation_Skill__c", "Student Technical Explanation Skill"),
@@ -497,13 +507,13 @@ async def interview_mandatory_fields_bu() -> bytes:
         FROM "Interviews__c" i
         JOIN "Student__c" s ON i."Student__c" = s."Id"
         LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
-        WHERE i."Interview_Date1__c" >= DATE_TRUNC('month', CURRENT_DATE)
-          AND i."Interview_Date1__c" < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+        WHERE i."Interview_Date1__c" >= :month_start
+          AND i."Interview_Date1__c" < CAST(:month_start AS date) + INTERVAL '1 month'
         ORDER BY m."Name", s."Name"
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"month_start": month_start})
         rows = result.fetchall()
 
     bu_data = {}
@@ -555,8 +565,8 @@ async def interview_mandatory_fields_bu() -> bytes:
 # 7. Last 2 Weeks No Interviews BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def no_interviews_2weeks_bu() -> bytes:
-    today = date.today()
+async def no_interviews_2weeks_bu(report_date: date | None = None) -> bytes:
+    today = report_date or today_cst()
 
     sql = text("""
         SELECT
@@ -571,13 +581,13 @@ async def no_interviews_2weeks_bu() -> bytes:
         WHERE s."Student_Marketing_Status__c" = 'In Market'
           AND s."Id" NOT IN (
               SELECT "Student__c" FROM "Interviews__c"
-              WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days'
+              WHERE "Interview_Date1__c" >= CAST(:ref_date AS date) - INTERVAL '14 days'
           )
         ORDER BY m."Name", s."Offshore_Manager_Name__c", s."Recruiter_Name__c", s."Name"
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"ref_date": today})
         rows = result.fetchall()
 
     bu_data = {}
@@ -588,8 +598,6 @@ async def no_interviews_2weeks_bu() -> bytes:
 
         if recent_interview:
             since_days = (today - recent_interview).days
-        elif days_in_market:
-            since_days = int(days_in_market)
         else:
             since_days = None
 
@@ -645,8 +653,8 @@ async def no_interviews_2weeks_bu() -> bytes:
 # 8. Last 2 Weeks No Interviews Offshore Manager-wise
 # ────────────────────────────────────────────────────────────
 
-async def no_interviews_2weeks_offshore() -> bytes:
-    today = date.today()
+async def no_interviews_2weeks_offshore(report_date: date | None = None) -> bytes:
+    today = report_date or today_cst()
 
     sql = text("""
         SELECT
@@ -659,13 +667,13 @@ async def no_interviews_2weeks_offshore() -> bytes:
         WHERE s."Student_Marketing_Status__c" = 'In Market'
           AND s."Id" NOT IN (
               SELECT "Student__c" FROM "Interviews__c"
-              WHERE "Interview_Date1__c" >= CURRENT_DATE - INTERVAL '14 days'
+              WHERE "Interview_Date1__c" >= CAST(:ref_date AS date) - INTERVAL '14 days'
           )
         ORDER BY s."Offshore_Manager_Name__c", s."Recruiter_Name__c", s."Name"
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"ref_date": today})
         rows = result.fetchall()
 
     mgr_data = {}
@@ -675,8 +683,6 @@ async def no_interviews_2weeks_offshore() -> bytes:
 
         if recent_interview:
             since_days = (today - recent_interview).days
-        elif days_in_market:
-            since_days = int(days_in_market)
         else:
             since_days = None
 
@@ -727,7 +733,10 @@ async def no_interviews_2weeks_offshore() -> bytes:
 # 9. Last Week Submissions & Interviews BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def last_week_performance_bu() -> bytes:
+async def last_week_performance_bu(report_date: date | None = None) -> bytes:
+    ref = report_date or today_cst()
+    week_start = ref - timedelta(days=ref.weekday())
+
     sql = text("""
         SELECT
             COALESCE(m."Name", 'Unknown') AS bu_name,
@@ -736,8 +745,8 @@ async def last_week_performance_bu() -> bytes:
             s."Name" AS student_name,
             COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
             COALESCE(s."Last_week_Interviews__c", 0) AS last_week_ints,
-            CASE WHEN s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-                  AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('week', CURRENT_DATE)
+            CASE WHEN s."Verbal_Confirmation_Date__c" >= CAST(:week_start AS date) - INTERVAL '1 week'
+                  AND s."Verbal_Confirmation_Date__c" < :week_start
                  THEN 1 ELSE 0 END AS confirmed
         FROM "Student__c" s
         LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
@@ -746,7 +755,7 @@ async def last_week_performance_bu() -> bytes:
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"week_start": week_start})
         rows = result.fetchall()
 
     bu_data = {}
@@ -785,7 +794,7 @@ async def last_week_performance_bu() -> bytes:
         lines.append(f"\U0001f3a4 Interview Count: {data['total_ints']}")
         lines.append(f"\U0001f465 In Market Count: {im}")
         lines.append(f"\U0001f3af %% Target: {target}")
-        lines.append(f"✅ Conformations: {data['total_conf']}")
+        lines.append(f"✅ Confirmations: {data['total_conf']}")
 
         for mgr, recruiters in sorted(data["managers"].items()):
             lines.append(f"\n\U0001f9d1‍\U0001f4bc Offshore Manager: *{mgr}*")
@@ -794,7 +803,7 @@ async def last_week_performance_bu() -> bytes:
                 for st in students:
                     lines.append(
                         f"\U0001f464 Student: *{st['name']}* | \U0001f4e4 Submissions: {st['subs']} "
-                        f"| \U0001f3a4 Interviews: {st['ints']} | ✅ Conformations: {st['conf']}"
+                        f"| \U0001f3a4 Interviews: {st['ints']} | ✅ Confirmations: {st['conf']}"
                     )
 
         if data['total_subs'] == 0:
@@ -817,7 +826,10 @@ async def last_week_performance_bu() -> bytes:
 # 10. Last Week Submissions & Interviews Offshore Manager-wise
 # ────────────────────────────────────────────────────────────
 
-async def last_week_performance_offshore() -> bytes:
+async def last_week_performance_offshore(report_date: date | None = None) -> bytes:
+    ref = report_date or today_cst()
+    week_start = ref - timedelta(days=ref.weekday())
+
     sql = text("""
         SELECT
             s."Offshore_Manager_Name__c" AS offshore_mgr,
@@ -825,8 +837,8 @@ async def last_week_performance_offshore() -> bytes:
             s."Name" AS student_name,
             COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
             COALESCE(s."Last_week_Interviews__c", 0) AS last_week_ints,
-            CASE WHEN s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-                  AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('week', CURRENT_DATE)
+            CASE WHEN s."Verbal_Confirmation_Date__c" >= CAST(:week_start AS date) - INTERVAL '1 week'
+                  AND s."Verbal_Confirmation_Date__c" < :week_start
                  THEN 1 ELSE 0 END AS confirmed
         FROM "Student__c" s
         WHERE s."Student_Marketing_Status__c" = 'In Market'
@@ -834,7 +846,7 @@ async def last_week_performance_offshore() -> bytes:
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"week_start": week_start})
         rows = result.fetchall()
 
     mgr_data = {}
@@ -870,14 +882,14 @@ async def last_week_performance_offshore() -> bytes:
         lines.append(f"\U0001f3a4 Interview Count: {data['total_ints']}")
         lines.append(f"\U0001f465 In Market Count: {im}")
         lines.append(f"\U0001f3af %% Target: {target}")
-        lines.append(f"✅ Conformations: {data['total_conf']}")
+        lines.append(f"✅ Confirmations: {data['total_conf']}")
 
         for rec, students in sorted(data["recruiters"].items()):
             lines.append(f"\n\U0001f465 Recruiter: *{rec}*")
             for st in students:
                 lines.append(
                     f"\U0001f464 Student: *{st['name']}* | \U0001f4e4 Submissions: {st['subs']} "
-                    f"| \U0001f3a4 Interviews: {st['ints']} | ✅ Conformations: {st['conf']}"
+                    f"| \U0001f3a4 Interviews: {st['ints']} | ✅ Confirmations: {st['conf']}"
                 )
 
         if data['total_subs'] == 0:
@@ -900,7 +912,10 @@ async def last_week_performance_offshore() -> bytes:
 # 11. Recruiter Last Week Performance BU-wise
 # ────────────────────────────────────────────────────────────
 
-async def recruiter_performance_bu() -> bytes:
+async def recruiter_performance_bu(report_date: date | None = None) -> bytes:
+    ref = report_date or today_cst()
+    week_start = ref - timedelta(days=ref.weekday())
+
     sql = text("""
         SELECT
             COALESCE(m."Name", 'Unknown') AS bu_name,
@@ -909,8 +924,8 @@ async def recruiter_performance_bu() -> bytes:
             s."Name" AS student_name,
             COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
             COALESCE(s."Last_week_Interviews__c", 0) AS last_week_ints,
-            CASE WHEN s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-                  AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('week', CURRENT_DATE)
+            CASE WHEN s."Verbal_Confirmation_Date__c" >= CAST(:week_start AS date) - INTERVAL '1 week'
+                  AND s."Verbal_Confirmation_Date__c" < :week_start
                  THEN 1 ELSE 0 END AS confirmed
         FROM "Student__c" s
         LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
@@ -919,7 +934,7 @@ async def recruiter_performance_bu() -> bytes:
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"week_start": week_start})
         rows = result.fetchall()
 
     rec_data = {}
@@ -953,12 +968,12 @@ async def recruiter_performance_bu() -> bytes:
         lines.append(f"\U0001f4e4 Submissions: {data['total_subs']}")
         lines.append(f"\U0001f3a4 Interviews: {data['total_ints']}")
         lines.append(f"\U0001f465 In Market Count: {im}")
-        lines.append(f"✅ Conformations: {data['total_conf']}")
+        lines.append(f"✅ Confirmations: {data['total_conf']}")
 
         for st in data["students"]:
             lines.append(
                 f"\n\U0001f464 Student: *{st['name']}* | \U0001f4e4 Submissions: {st['subs']} "
-                f"| \U0001f3a4 Interviews: {st['ints']} | ✅ *Conformations:* {st['conf']}"
+                f"| \U0001f3a4 Interviews: {st['ints']} | ✅ *Confirmations:* {st['conf']}"
             )
 
         output_rows.append({
@@ -975,7 +990,10 @@ async def recruiter_performance_bu() -> bytes:
 # 12. Recruiter Last Week Performance Offshore Manager-wise
 # ────────────────────────────────────────────────────────────
 
-async def recruiter_performance_offshore() -> bytes:
+async def recruiter_performance_offshore(report_date: date | None = None) -> bytes:
+    ref = report_date or today_cst()
+    week_start = ref - timedelta(days=ref.weekday())
+
     sql = text("""
         SELECT
             s."Offshore_Manager_Name__c" AS offshore_mgr,
@@ -984,8 +1002,8 @@ async def recruiter_performance_offshore() -> bytes:
             s."Name" AS student_name,
             COALESCE(s."Last_week_Submissions__c", 0) AS last_week_subs,
             COALESCE(s."Last_week_Interviews__c", 0) AS last_week_ints,
-            CASE WHEN s."Verbal_Confirmation_Date__c" >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '1 week'
-                  AND s."Verbal_Confirmation_Date__c" < DATE_TRUNC('week', CURRENT_DATE)
+            CASE WHEN s."Verbal_Confirmation_Date__c" >= CAST(:week_start AS date) - INTERVAL '1 week'
+                  AND s."Verbal_Confirmation_Date__c" < :week_start
                  THEN 1 ELSE 0 END AS confirmed
         FROM "Student__c" s
         LEFT JOIN "Manager__c" m ON s."Manager__c" = m."Id"
@@ -994,7 +1012,7 @@ async def recruiter_performance_offshore() -> bytes:
     """)
 
     async with async_session() as session:
-        result = await session.execute(sql)
+        result = await session.execute(sql, {"week_start": week_start})
         rows = result.fetchall()
 
     mgr_data = {}
@@ -1033,7 +1051,7 @@ async def recruiter_performance_offshore() -> bytes:
         lines.append(f"\U0001f3a4 Interview Count: {data['total_ints']}")
         lines.append(f"\U0001f465 In Market Count: {im}")
         lines.append(f"\U0001f3af %% Target: {target}")
-        lines.append(f"✅ Conformations: {data['total_conf']}")
+        lines.append(f"✅ Confirmations: {data['total_conf']}")
 
         for bu, recruiters in sorted(data["bus"].items()):
             lines.append(f"\n\U0001f3e2 *BU: {bu}*")
@@ -1042,7 +1060,7 @@ async def recruiter_performance_offshore() -> bytes:
                 for st in students:
                     lines.append(
                         f"\U0001f464 Student: *{st['name']}* | \U0001f4e4 Submissions: {st['subs']} "
-                        f"| \U0001f3a4 Interviews: {st['ints']} | ✅ *Conformations:* {st['conf']}"
+                        f"| \U0001f3a4 Interviews: {st['ints']} | ✅ *Confirmations:* {st['conf']}"
                     )
 
         output_rows.append({"Offshore Manager Name": mgr, "Message": "\n".join(lines)})
